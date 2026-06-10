@@ -52,7 +52,7 @@ export default defineNuxtConfig({
       ],
       script: [
         {
-          innerHTML: `(function(){try{var d=localStorage.getItem('vueuse-color-scheme');var m=d==='dark'||(d!=='light'&&matchMedia('(prefers-color-scheme:dark)').matches);document.documentElement.style.backgroundColor=m?'#1E1E1E':'#FFFFFF'}catch(e){}})()`,
+          innerHTML: `(function(){try{var d=localStorage.getItem('vueuse-color-scheme');var m=d==='dark'||(d!=='light'&&matchMedia('(prefers-color-scheme:dark)').matches);document.documentElement.style.backgroundColor=m?'#17130F':'#FAF5EE'}catch(e){}})()`,
           type: "text/javascript",
         },
       ],
@@ -142,6 +142,10 @@ export default defineNuxtConfig({
     },
   },
   fonts: {
+    families: [
+      { name: "Fraunces", provider: "google", weights: [400, 500, 600, 700, 900], styles: ["normal", "italic"] },
+      { name: "Inter", provider: "google", weights: [400, 500, 600, 700], styles: ["normal"] },
+    ],
     defaults: {
       weights: ["100 900"],
       styles: ["normal", "italic"],
@@ -257,15 +261,37 @@ export default defineNuxtConfig({
         },
         VMenu: {
           scrollStrategy: "close",
+          rounded: "lg",
         },
         VAutocomplete: {
           scrollStrategy: "close",
+          rounded: "lg",
         },
         VCombobox: {
           scrollStrategy: "close",
+          rounded: "lg",
         },
         VSelect: {
           scrollStrategy: "close",
+          rounded: "lg",
+        },
+        VCard: {
+          rounded: "xl",
+        },
+        VBtn: {
+          rounded: "lg",
+        },
+        VTextField: {
+          rounded: "lg",
+        },
+        VTextarea: {
+          rounded: "lg",
+        },
+        VChip: {
+          rounded: "lg",
+        },
+        VDialog: {
+          rounded: "xl",
         },
       },
     },

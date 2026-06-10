@@ -1,3 +1,19 @@
+:root {
+  --ms-radius-lg: 14px;
+  --ms-radius-xl: 20px;
+  --ms-shadow-sm: 0 1px 2px rgba(43, 37, 33, 0.06), 0 2px 8px rgba(43, 37, 33, 0.05);
+  --ms-shadow-md: 0 6px 16px rgba(43, 37, 33, 0.09), 0 12px 32px rgba(43, 37, 33, 0.08);
+}
+
+/* Soft, warm shadows instead of Material's hard elevation */
+.v-card.v-card--variant-elevated {
+  box-shadow: var(--ms-shadow-sm);
+  transition: box-shadow 0.2s ease, transform 0.2s ease;
+}
+.v-card.v-card--variant-elevated.on-hover {
+  box-shadow: var(--ms-shadow-md) !important;
+}
+
 .layout-enter-active,
 .layout-leave-active {
   transition: opacity 0.2s;

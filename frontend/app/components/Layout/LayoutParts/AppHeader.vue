@@ -1,27 +1,29 @@
 <template>
   <v-app-bar
     clipped-left
-    density="compact"
+    flat
     app
-    color="primary"
-    dark
-    class="d-print-none"
+    color="background"
+    border="b"
+    height="68"
+    class="d-print-none app-header"
   >
     <slot />
     <RouterLink :to="routerLink">
       <v-btn
         icon
-        color="white"
+        color="primary"
       >
-        <v-icon size="40"> {{ $globals.icons.primary }} </v-icon>
+        <v-icon size="36"> {{ $globals.icons.primary }} </v-icon>
       </v-btn>
     </RouterLink>
 
     <div
       btn
-      class="pl-2"
+      class="pl-1"
     >
       <v-toolbar-title
+        class="app-wordmark"
         style="cursor: pointer"
         @click="$router.push(routerLink)"
       >
@@ -36,18 +38,17 @@
     <template v-if="menu">
       <v-responsive
         v-if="!xs"
-        max-width="250"
+        max-width="260"
+        class="mr-2"
         @click="activateSearch"
       >
         <v-text-field
           readonly
-          class="mt-1"
-          rounded
-          variant="solo-filled"
+          hide-details
+          rounded="xl"
+          variant="outlined"
           density="compact"
-          flat
           :prepend-inner-icon="$globals.icons.search"
-          bg-color="primary-darken-1"
           :placeholder="$t('search.search-hint')"
         />
       </v-responsive>
@@ -136,5 +137,18 @@ async function logout() {
 <style scoped>
 .v-toolbar {
   z-index: 2010 !important;
+}
+
+.app-wordmark {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 1.6rem;
+  letter-spacing: -0.02em;
+  color: rgb(var(--v-theme-primary));
+}
+
+/* Quiet outlined search: soften the border on the paper header */
+.app-header :deep(.v-field__outline) {
+  --v-field-border-opacity: 0.16;
 }
 </style>

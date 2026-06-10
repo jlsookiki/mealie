@@ -2,17 +2,11 @@
   <v-app dark>
     <TheSnackbar />
 
-    <AppHeader>
-      <v-btn
-        icon
-        @click.stop="sidebar = !sidebar"
-      >
-        <v-icon> {{ $globals.icons.menu }}</v-icon>
-      </v-btn>
-    </AppHeader>
+    <AppHeader />
 
     <AppSidebar
       v-model="sidebar"
+      :permanent="lgAndUp"
       :top-link="topLinks"
       :secondary-links="cookbookLinks || []"
     >
@@ -83,7 +77,17 @@
         </v-list>
       </v-menu>
     </AppSidebar>
-    <v-main class="pt-12">
+
+    <AppBottomNav
+      v-if="!lgAndUp"
+      :links="bottomNavLinks"
+      @more="sidebar = true"
+    />
+
+    <v-main
+      class="pt-12"
+      :class="{ 'pb-16': !lgAndUp }"
+    >
       <v-scroll-x-transition>
         <div>
           <NuxtPage />
@@ -104,6 +108,7 @@ import type { ReadCookBook } from "~/lib/api/types/cookbook";
 const i18n = useI18n();
 const { $globals } = useNuxtApp();
 const display = useDisplay();
+const lgAndUp = display.lgAndUp;
 const auth = useMealieAuth();
 const { isOwnGroup } = useLoggedInState();
 const { group } = useGroupSelf();
@@ -222,6 +227,13 @@ const createLinks = computed(() => [
     hide: false,
   },
 ]);
+
+// Primary destinations for the mobile bottom nav (excludes nested/grouped links).
+const bottomNavLinks = computed<SideBarLink[]>(() =>
+  topLinks.value
+    .filter(link => link.to && (!link.restricted || isOwnGroup.value))
+    .slice(0, 4),
+);
 
 const topLinks = computed<SideBarLink[]>(() => [
   {
