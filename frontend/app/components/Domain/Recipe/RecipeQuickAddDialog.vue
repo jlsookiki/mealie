@@ -196,7 +196,8 @@ import { watchDebounced } from "@vueuse/core";
 import { mdiClose, mdiCheckCircle, mdiLinkVariant } from "@mdi/js";
 import { useUserApi } from "~/composables/api";
 import { useGroupSelf } from "~/composables/use-groups";
-import type { Recipe } from "~/lib/api/types/recipe";
+import { uuid4 } from "~/composables/use-utils";
+import type { Recipe, RecipeIngredient, RecipeStep } from "~/lib/api/types/recipe";
 
 type QuickAddState = "idle" | "previewLoading" | "preview" | "previewError" | "importing" | "success";
 
@@ -268,6 +269,14 @@ function humanizeTime(t: string | null) {
   return parts.join(" ") || t;
 }
 
+const nonEmptyLines = computed(() => input.value.split("\n").map(l => l.trim()).filter(Boolean));
+
+// Multi-line / substantial free text = a recipe to parse, not just a name.
+const isRecipeText = computed(() =>
+  !detectedUrl.value && !looksLikeMarkup.value
+  && (nonEmptyLines.value.length > 1 || input.value.trim().length > 60),
+);
+
 const primaryAction = computed(() => {
   if (!input.value.trim() || state.value === "success") {
     return null;
@@ -280,6 +289,9 @@ const primaryAction = computed(() => {
   }
   if (looksLikeMarkup.value) {
     return { label: "Parse & import", handler: importFromMarkup };
+  }
+  if (isRecipeText.value) {
+    return { label: "Parse & add recipe", handler: parseTextToRecipe };
   }
   return { label: `Create “${firstLine.value}”`, handler: createFromScratch };
 });
@@ -369,6 +381,124 @@ async function importFromMarkup() {
     state.value = "idle";
     errorMessage.value = "Couldn't find a recipe in that text.";
     return;
+  }
+  await celebrateAndGo(slug);
+}
+
+// ── Free-text recipe parsing (no AI required) ─────────────────────────────
+// Splits pasted text into title / ingredient lines / instruction steps using
+// section headers when present, falling back to per-line heuristics.
+const ING_HEADER = /^(ingredients?)\b\s*:?\s*$/i;
+const INST_HEADER = /^(instructions?|directions?|method|steps|preparation)\b\s*:?\s*$/i;
+const MEASURE = /\b(cups?|tbsp|tablespoons?|tsp|teaspoons?|oz|ounces?|lbs?|pounds?|g|grams?|kg|ml|l|cloves?|pinch|cans?|sticks?|packages?|slices?|sprigs?)\b/i;
+
+function looksLikeIngredient(line: string): boolean {
+  if (line.length > 140) {
+    return false;
+  }
+  return /^(\d|½|¼|¾|⅓|⅔|⅛|⅜|⅝|⅞|a |an |one |two |three |four |½|¼)/i.test(line) || MEASURE.test(line);
+}
+
+function stripBullet(line: string): string {
+  return line.replace(/^\s*(\d+\s*[.)]\s*|step\s*\d+\s*[:.)]?\s*|[-*•]\s*)/i, "").trim();
+}
+
+function segmentRecipeText(raw: string): { title: string; ingredients: string[]; instructions: string[] } {
+  const lines = raw.split("\n").map(l => l.trim());
+  let startIdx = 0;
+  let title = "";
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i]) {
+      title = lines[i].replace(/^#+\s*/, "");
+      startIdx = i + 1;
+      break;
+    }
+  }
+
+  const body = lines.slice(startIdx);
+  const ingIdx = body.findIndex(l => ING_HEADER.test(l));
+  const instIdx = body.findIndex(l => INST_HEADER.test(l));
+
+  let ingredients: string[] = [];
+  let instructions: string[] = [];
+
+  if (ingIdx !== -1 && instIdx !== -1) {
+    if (ingIdx < instIdx) {
+      ingredients = body.slice(ingIdx + 1, instIdx);
+      instructions = body.slice(instIdx + 1);
+    }
+    else {
+      instructions = body.slice(instIdx + 1, ingIdx);
+      ingredients = body.slice(ingIdx + 1);
+    }
+  }
+  else if (ingIdx !== -1) {
+    ingredients = body.slice(ingIdx + 1);
+  }
+  else if (instIdx !== -1) {
+    ingredients = body.slice(0, instIdx);
+    instructions = body.slice(instIdx + 1);
+  }
+  else {
+    // No headers — classify each line.
+    for (const l of body) {
+      if (!l) {
+        continue;
+      }
+      (looksLikeIngredient(l) ? ingredients : instructions).push(l);
+    }
+  }
+
+  ingredients = ingredients.map(l => l.replace(/^[-*•]\s*/, "").trim()).filter(Boolean);
+  instructions = instructions.map(stripBullet).filter(Boolean);
+  return { title: title || "New Recipe", ingredients, instructions };
+}
+
+async function parseTextToRecipe() {
+  errorMessage.value = "";
+  state.value = "importing";
+  progressMessage.value = "Reading your recipe…";
+
+  const { title, ingredients, instructions } = segmentRecipeText(input.value);
+
+  const { data: created, error } = await api.recipes.createOne({ name: title });
+  if (error || !created) {
+    state.value = "idle";
+    errorMessage.value = "Couldn't create the recipe. Maybe that name is already taken?";
+    return;
+  }
+  const slug = typeof created === "string" ? created : ((created as Recipe).slug || "");
+
+  const { data: recipe } = await api.recipes.getOne(slug);
+  if (!recipe) {
+    // Recipe exists but we couldn't reload it; still route there.
+    await celebrateAndGo(slug);
+    return;
+  }
+
+  progressMessage.value = "Adding ingredients & steps…";
+
+  // Store ingredient lines as their original text — exactly how Mealie stores
+  // unparsed imports. Users can structure them later via "Parse Ingredients".
+  recipe.recipeIngredient = ingredients.map<RecipeIngredient>(line => ({
+    referenceId: uuid4(),
+    quantity: null,
+    unit: null,
+    food: null,
+    note: line,
+    originalText: line,
+    title: null,
+  }));
+  recipe.recipeInstructions = instructions.map<RecipeStep>(text => ({
+    id: uuid4(),
+    title: "",
+    text,
+  }));
+
+  const { error: updateError } = await api.recipes.updateOne(slug, recipe);
+  if (updateError) {
+    // The recipe was created; just send them to it to finish manually.
+    errorMessage.value = "";
   }
   await celebrateAndGo(slug);
 }
