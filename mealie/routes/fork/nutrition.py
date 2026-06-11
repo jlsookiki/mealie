@@ -8,10 +8,13 @@ to grams, sums totals, divides by servings, and returns per-serving nutrition
 with a per-ingredient breakdown that includes every source's value.
 
 Cross-referencing:
-- All available sources are queried for each ingredient.
-- 3+ matches → median calories wins (robust to a single bad match).
-- 2 matches → higher-priority source for the recipe type (branded vs generic).
-- Disagreement beyond 25% is flagged so a wrong match is visible.
+- Each source returns its top candidates (not just the first hit).
+- Candidates are scored: query-token overlap dominates, then source quality
+  (USDA Foundation > SR Legacy > Branded for generics; OFF scan count and
+  completeness), plus a consensus bonus for kcal values near the candidate
+  median. Highest score wins.
+- Disagreement beyond 25% across the sources' best picks is flagged so a
+  wrong match is visible.
 """
 
 import asyncio
@@ -195,60 +198,67 @@ _OFF_HEADERS = {"User-Agent": "MealieFork/1.0"}
 _NUTRITIONIX_URL = "https://trackapi.nutritionix.com/v2/natural/nutrients"
 
 
-def _parse_usda(data: dict) -> dict | None:
-    food = (data.get("foods") or [None])[0]
-    if not food:
-        return None
-    by_num: dict[str, float] = {}
-    for n in food.get("foodNutrients") or []:
-        num = n.get("nutrientNumber")
-        if num is not None:
-            by_num[str(num)] = float(n.get("value") or 0)
-    kcal = by_num.get("208", 0)
-    if not kcal:
-        return None
-    return {
-        "name": str(food.get("description") or "").strip().title(),
-        "kcal": kcal,
-        "protein": by_num.get("203", 0),
-        "fat": by_num.get("204", 0),
-        "carb": by_num.get("205", 0),
-        "fiber": by_num.get("291", 0),
-        "sugar": by_num.get("269") or by_num.get("2000", 0),
-        "sodium_mg": by_num.get("307", 0),
-        "chol_mg": by_num.get("601", 0),
-        "sat_fat": by_num.get("606", 0),
-    }
+def _parse_usda_foods(data: dict) -> list[dict]:
+    """Parse every returned food into a per-100g candidate, keeping ranking metadata."""
+    candidates: list[dict] = []
+    for food in data.get("foods") or []:
+        by_num: dict[str, float] = {}
+        for n in food.get("foodNutrients") or []:
+            num = n.get("nutrientNumber")
+            if num is not None:
+                by_num[str(num)] = float(n.get("value") or 0)
+        # Foundation foods report energy as Atwater factors (#957/#958), not #208 —
+        # requiring #208 silently rejected USDA's lab-analyzed gold-standard data.
+        kcal = by_num.get("208") or by_num.get("957") or by_num.get("958") or 0
+        if not kcal:
+            continue
+        candidates.append({
+            "name": str(food.get("description") or "").strip().title(),
+            "kcal": kcal,
+            "protein": by_num.get("203", 0),
+            "fat": by_num.get("204", 0),
+            "carb": by_num.get("205", 0),
+            "fiber": by_num.get("291", 0),
+            "sugar": by_num.get("269") or by_num.get("2000", 0),
+            "sodium_mg": by_num.get("307", 0),
+            "chol_mg": by_num.get("601", 0),
+            "sat_fat": by_num.get("606", 0),
+            "dataType": food.get("dataType"),
+        })
+    return candidates
 
 
-def _parse_off(data: dict) -> dict | None:
-    products = data.get("products") or []
-    if not products:
-        return None
-    product = products[0]
-    n = product.get("nutriments") or {}
+def _parse_off_products(data: dict) -> list[dict]:
+    """Parse every returned product into a per-100g candidate, keeping crowd-quality metadata."""
+    candidates: list[dict] = []
+    for product in data.get("products") or []:
+        n = product.get("nutriments") or {}
 
-    def _f(key: str) -> float:
-        return float(n.get(key) or 0)
+        def _f(key: str, _n: dict = n) -> float:
+            return float(_n.get(key) or 0)
 
-    kcal = _f("energy-kcal_100g")
-    if not kcal:
-        return None
-    name = str(product.get("product_name") or product.get("product_name_en") or "").strip()
-    brand = str(product.get("brands") or "").split(",")[0].strip()
-    return {
-        "name": f"{name} ({brand})" if brand and brand.lower() not in name.lower() else name,
-        "kcal": kcal,
-        "protein": _f("proteins_100g"),
-        "fat": _f("fat_100g"),
-        "carb": _f("carbohydrates_100g"),
-        "fiber": _f("fiber_100g"),
-        "sugar": _f("sugars_100g"),
-        # OFF sodium is in grams/100g → convert to mg
-        "sodium_mg": _f("sodium_100g") * 1000,
-        "chol_mg": _f("cholesterol_100g") * 1000,
-        "sat_fat": _f("saturated-fat_100g"),
-    }
+        kcal = _f("energy-kcal_100g")
+        if not kcal:
+            continue
+        name = str(product.get("product_name") or product.get("product_name_en") or "").strip()
+        brand = str(product.get("brands") or "").split(",")[0].strip()
+        candidates.append({
+            "name": f"{name} ({brand})" if brand and brand.lower() not in name.lower() else name,
+            "kcal": kcal,
+            "protein": _f("proteins_100g"),
+            "fat": _f("fat_100g"),
+            "carb": _f("carbohydrates_100g"),
+            "fiber": _f("fiber_100g"),
+            "sugar": _f("sugars_100g"),
+            # OFF sodium is in grams/100g → convert to mg
+            "sodium_mg": _f("sodium_100g") * 1000,
+            "chol_mg": _f("cholesterol_100g") * 1000,
+            "sat_fat": _f("saturated-fat_100g"),
+            # crowd-verification signals: scan count separates OFF's good data from junk
+            "scans": float(product.get("unique_scans_n") or 0),
+            "completeness": float(product.get("completeness") or 0),
+        })
+    return candidates
 
 
 async def _lookup_usda(
@@ -256,17 +266,17 @@ async def _lookup_usda(
     term: str,
     api_key: str,
     data_types: str = "Foundation,SR Legacy",
-) -> dict | None:
+) -> list[dict]:
     try:
         resp = await client.get(
             _USDA_URL,
-            params={"query": term, "pageSize": 1, "dataType": data_types, "api_key": api_key},
+            params={"query": term, "pageSize": 5, "dataType": data_types, "api_key": api_key},
             timeout=8.0,
         )
         resp.raise_for_status()
-        return _parse_usda(resp.json())
+        return _parse_usda_foods(resp.json())
     except Exception:
-        return None
+        return []
 
 
 async def _off_search(client: httpx.AsyncClient, term: str) -> dict | None:
@@ -275,7 +285,7 @@ async def _off_search(client: httpx.AsyncClient, term: str) -> dict | None:
         try:
             resp = await client.get(
                 _OFF_URL,
-                params={"search_terms": term, "search_simple": 1, "action": "process", "json": 1, "page_size": 1},
+                params={"search_terms": term, "search_simple": 1, "action": "process", "json": 1, "page_size": 5},
                 headers=_OFF_HEADERS,
                 timeout=8.0,
             )
@@ -292,14 +302,14 @@ async def _off_search(client: httpx.AsyncClient, term: str) -> dict | None:
     return None
 
 
-async def _lookup_off(client: httpx.AsyncClient, term: str) -> dict | None:
+async def _lookup_off(client: httpx.AsyncClient, term: str) -> list[dict]:
     data = await _off_search(client, term)
-    result = _parse_off(data) if data else None
-    if result is None and len(term.split()) > 4:
+    result = _parse_off_products(data) if data else []
+    if not result and len(term.split()) > 4:
         # retry with first 4 words for long branded names
         short = " ".join(term.split()[:4])
         data = await _off_search(client, short)
-        result = _parse_off(data) if data else None
+        result = _parse_off_products(data) if data else []
     return result
 
 
@@ -358,11 +368,10 @@ async def _lookup_candidates(
     nx_id: str,
     nx_key: str,
 ) -> tuple[list[dict], bool]:
-    """Query every available source concurrently. Returns (candidates, branded).
+    """Query every available source concurrently for top candidates.
 
-    Each candidate is a per-100g dict tagged with its "source". Cross-referencing
-    multiple sources lets us pick a consensus value and flag disagreement (a wrong
-    branded match — e.g. a rice pouch resolving to 'rice crackers' — stands out)."""
+    Each candidate is a per-100g dict tagged with its "source" plus quality
+    metadata (USDA dataType, OFF scan count/completeness) used for scoring."""
     term = _clean_query(query) or query
     branded = _looks_branded(query)
     usda_types = "Branded,Foundation,SR Legacy" if branded else "Foundation,SR Legacy"
@@ -374,35 +383,114 @@ async def _lookup_candidates(
     )
 
     candidates: list[dict] = []
-    for src, per100 in (("usda", usda), ("off", off), ("nutritionix", nx)):
-        if per100 and per100.get("kcal"):
-            candidates.append({**per100, "source": src})
+    for src, results in (("usda", usda), ("off", off), ("nutritionix", [nx] if nx else [])):
+        for rank, per100 in enumerate(results):
+            if per100 and per100.get("kcal"):
+                candidates.append({**per100, "source": src, "rank": rank})
     return candidates, branded
 
 
-def _select_primary(candidates: list[dict], branded: bool) -> tuple[dict | None, str]:
-    """Cross-reference candidates → (primary per100, agreement).
+_TOKEN_STOPWORDS = {"a", "an", "the", "of", "in", "with", "and", "or", "to", "for", "each"}
 
-    - 1 source  → use it ("single")
-    - 3+ sources → median by kcal (robust to a single bad match)
-    - 2 sources → prefer the higher-priority source for the recipe type
-    Agreement is "agree" when the spread is within 25%, else "divergent"."""
+
+def _tokens(s: str) -> set[str]:
+    """Lowercased word set, articles dropped, naive singularization (chickpeas → chickpea)."""
+    out = set()
+    for t in re.split(r"[^a-z]+", s.lower()):
+        if len(t) < 2 or t in _TOKEN_STOPWORDS:
+            continue
+        if len(t) > 3 and t.endswith("es"):
+            t = t[:-2]
+        elif len(t) > 2 and t.endswith("s"):
+            t = t[:-1]
+        out.add(t)
+    return out
+
+
+_USDA_TYPE_BONUS = {"Foundation": 0.30, "SR Legacy": 0.20, "Branded": 0.10}
+
+
+def _score_candidate(c: dict, query_tokens: set[str], branded: bool) -> float:
+    """Match confidence: token overlap with the query dominates; source quality breaks ties.
+
+    - Token overlap is F1-style: recall of the query AND precision of the name, so
+      "Almond Butter" (contains "butter" but is a different food) scores below plain
+      "Butter, salted". Parenthetical synonyms are stripped first — USDA's
+      "(garbanzo beans, bengal gram)" decorations aren't noise to punish.
+    - An exact head-noun match (first comma-segment == query) earns a bonus, matching
+      USDA's "Head, qualifiers, ..." naming convention.
+    - Each API's own relevance ordering earns a small rank bonus.
+    - USDA: trust ladder Foundation (lab-analyzed) > SR Legacy > Branded (label data);
+      inverted for branded queries where the Branded dataset is the right shelf.
+    - OFF: crowd verification — unique scan count (2 scans = junk, 95 = trustworthy)
+      plus the dataset's own completeness score.
+    """
+    raw_name = c.get("name") or ""
+    clean_name = re.sub(r"\([^)]*\)", "", raw_name)
+    name_tokens = _tokens(clean_name)
+    if not query_tokens or not name_tokens:
+        return 0.0
+    hits = len(query_tokens & name_tokens)
+    recall = hits / len(query_tokens)
+    precision = hits / len(name_tokens)
+    score = 2 * precision * recall / (precision + recall) if hits else 0.0
+    if _tokens(clean_name.split(",")[0]) == query_tokens:
+        score += 0.15
+    score += max(0.0, 0.10 - 0.025 * (c.get("rank") or 0))
+
+    if c["source"] == "usda":
+        if branded:
+            score += 0.25 if c.get("dataType") == "Branded" else 0.10
+        else:
+            score += _USDA_TYPE_BONUS.get(c.get("dataType") or "", 0.05)
+    elif c["source"] == "off":
+        scans = min(c.get("scans") or 0.0, 100.0) / 100.0
+        score += 0.20 * scans + 0.10 * (c.get("completeness") or 0.0)
+    elif c["source"] == "nutritionix":
+        score += 0.20
+    return score
+
+
+def _select_primary(candidates: list[dict], branded: bool, query: str) -> tuple[dict | None, str, list[dict]]:
+    """Score all candidates → (primary, agreement, best-per-source).
+
+    The consensus bonus requires true cross-referencing: a candidate only earns it
+    when a candidate from a DIFFERENT source lands within 25% kcal — same-source
+    neighbors agreeing means nothing, and a global median is meaningless when the
+    kcal distribution is bimodal (canned ~130 vs dry ~380 chickpeas). Agreement is
+    judged across each source's best candidate: "single" | "agree" | "divergent"."""
     if not candidates:
-        return None, "none"
-    if len(candidates) == 1:
-        return candidates[0], "single"
+        return None, "none", []
 
-    by_kcal = sorted(candidates, key=lambda c: c["kcal"])
-    lo, hi = by_kcal[0]["kcal"], by_kcal[-1]["kcal"]
-    mid_kcal = by_kcal[len(by_kcal) // 2]["kcal"]
-    agreement = "agree" if (hi - lo) / max(mid_kcal, 1) <= 0.25 else "divergent"
+    query_tokens = _tokens(_clean_query(query) or query)
+    scored = []
+    for c in candidates:
+        s = _score_candidate(c, query_tokens, branded)
+        corroborated = any(
+            o["source"] != c["source"] and abs(o["kcal"] - c["kcal"]) / max(c["kcal"], 1) <= 0.25
+            for o in candidates
+        )
+        if corroborated:
+            s += 0.25
+        scored.append((c, s))
 
-    if len(candidates) >= 3:
-        primary = by_kcal[len(by_kcal) // 2]  # median defeats a lone outlier
+    best_per_source: dict[str, tuple[dict, float]] = {}
+    for c, s in scored:
+        cur = best_per_source.get(c["source"])
+        if cur is None or s > cur[1]:
+            best_per_source[c["source"]] = (c, s)
+
+    primary = max(scored, key=lambda cs: cs[1])[0]
+
+    source_bests = [c for c, _ in best_per_source.values()]
+    if len(source_bests) == 1:
+        agreement = "single"
     else:
-        order = ["off", "nutritionix", "usda"] if branded else ["usda", "nutritionix", "off"]
-        primary = min(candidates, key=lambda c: order.index(c["source"]) if c["source"] in order else 9)
-    return primary, agreement
+        kcals = sorted(c["kcal"] for c in source_bests)
+        mid = kcals[len(kcals) // 2]
+        agreement = "agree" if (kcals[-1] - kcals[0]) / max(mid, 1) <= 0.25 else "divergent"
+
+    return primary, agreement, source_bests
 
 
 def _round1(n: float) -> str:
@@ -459,11 +547,11 @@ class ForkNutritionController(BaseUserController):
 
             grams = _to_grams(ing.quantity, unit_name, food_name or ing.note or "")
             candidates, branded = await _lookup_candidates(client, query, api_key, nx_id, nx_key)
-            primary, agreement = _select_primary(candidates, branded)
+            primary, agreement, source_bests = _select_primary(candidates, branded, query)
 
             sources_out = [
                 SourceValue(source=c["source"], name=c.get("name") or None, kcalPer100=int(round(c["kcal"])))
-                for c in sorted(candidates, key=lambda c: c["kcal"])
+                for c in sorted(source_bests, key=lambda c: c["kcal"])
             ]
 
             if primary is None:
