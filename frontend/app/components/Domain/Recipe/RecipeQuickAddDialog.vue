@@ -386,72 +386,95 @@ async function importFromMarkup() {
 }
 
 // ── Free-text recipe parsing (no AI required) ─────────────────────────────
-// Splits pasted text into title / ingredient lines / instruction steps using
-// section headers when present, falling back to per-line heuristics.
+// Walks pasted text section-by-section: content before the first recognized
+// header is the description; headers switch the active section; sections end
+// at the next header. Falls back to per-line heuristics when no headers exist.
 const ING_HEADER = /^(ingredients?)\b\s*:?\s*$/i;
-const INST_HEADER = /^(instructions?|directions?|method|steps|preparation)\b\s*:?\s*$/i;
-const MEASURE = /\b(cups?|tbsp|tablespoons?|tsp|teaspoons?|oz|ounces?|lbs?|pounds?|g|grams?|kg|ml|l|cloves?|pinch|cans?|sticks?|packages?|slices?|sprigs?)\b/i;
+const INST_HEADER = /^(instructions?|directions?|method|steps?|preparation)\b\s*:?\s*$/i;
+const NOTE_HEADER = /^(notes?|tips?|nutrition|health\s*notes?)\b\s*:?\s*$/i;
+const MEASURE = /\b(cups?|tbsp|tablespoons?|tsp|teaspoons?|oz|ounces?|lbs?|pounds?|g|grams?|kg|ml|l|cloves?|pinch|cans?|sticks?|packets?|packages?|slices?|sprigs?)\b/i;
+
+type Section = "description" | "ingredients" | "instructions" | "notes";
+
+interface SegmentedRecipe {
+  title: string;
+  description: string;
+  ingredients: string[];
+  instructions: string[];
+  notes: string;
+}
 
 function looksLikeIngredient(line: string): boolean {
-  if (line.length > 140) {
+  if (line.length > 160) {
     return false;
   }
-  return /^(\d|½|¼|¾|⅓|⅔|⅛|⅜|⅝|⅞|a |an |one |two |three |four |½|¼)/i.test(line) || MEASURE.test(line);
+  return /^(\d|½|¼|¾|⅓|⅔|⅛|⅜|⅝|⅞|a |an |one |two |three |four )/i.test(line) || MEASURE.test(line);
 }
 
-function stripBullet(line: string): string {
-  return line.replace(/^\s*(\d+\s*[.)]\s*|step\s*\d+\s*[:.)]?\s*|[-*•]\s*)/i, "").trim();
+function stripIngredientBullet(line: string): string {
+  return line.replace(/^\s*[-*•·]\s*/, "").trim();
 }
 
-function segmentRecipeText(raw: string): { title: string; ingredients: string[]; instructions: string[] } {
+function stripStepBullet(line: string): string {
+  return line.replace(/^\s*(\d+\s*[.)]\s*|step\s*\d+\s*[:.)]?\s*|[-*•·]\s*)/i, "").trim();
+}
+
+function joinParagraphs(lines: string[]): string {
+  return lines.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+
+function segmentRecipeText(raw: string): SegmentedRecipe {
   const lines = raw.split("\n").map(l => l.trim());
-  let startIdx = 0;
-  let title = "";
-  for (let i = 0; i < lines.length; i++) {
-    if (lines[i]) {
-      title = lines[i].replace(/^#+\s*/, "");
-      startIdx = i + 1;
-      break;
+
+  let i = 0;
+  while (i < lines.length && !lines[i]) {
+    i++;
+  }
+  const title = (lines[i] || "New Recipe").replace(/^#+\s*/, "");
+  i++;
+
+  const buckets: Record<Section, string[]> = { description: [], ingredients: [], instructions: [], notes: [] };
+  let current: Section = "description";
+  for (; i < lines.length; i++) {
+    const l = lines[i];
+    if (ING_HEADER.test(l)) {
+      current = "ingredients";
+      continue;
     }
+    if (INST_HEADER.test(l)) {
+      current = "instructions";
+      continue;
+    }
+    if (NOTE_HEADER.test(l)) {
+      current = "notes";
+      continue;
+    }
+    buckets[current].push(l);
   }
 
-  const body = lines.slice(startIdx);
-  const ingIdx = body.findIndex(l => ING_HEADER.test(l));
-  const instIdx = body.findIndex(l => INST_HEADER.test(l));
+  let ingredients = buckets.ingredients.map(stripIngredientBullet).filter(Boolean);
+  let instructions = buckets.instructions.map(stripStepBullet).filter(Boolean);
 
-  let ingredients: string[] = [];
-  let instructions: string[] = [];
-
-  if (ingIdx !== -1 && instIdx !== -1) {
-    if (ingIdx < instIdx) {
-      ingredients = body.slice(ingIdx + 1, instIdx);
-      instructions = body.slice(instIdx + 1);
-    }
-    else {
-      instructions = body.slice(instIdx + 1, ingIdx);
-      ingredients = body.slice(ingIdx + 1);
-    }
-  }
-  else if (ingIdx !== -1) {
-    ingredients = body.slice(ingIdx + 1);
-  }
-  else if (instIdx !== -1) {
-    ingredients = body.slice(0, instIdx);
-    instructions = body.slice(instIdx + 1);
-  }
-  else {
-    // No headers — classify each line.
-    for (const l of body) {
-      if (!l) {
-        continue;
+  // No section headers found — classify the leading block line by line.
+  if (!ingredients.length && !instructions.length) {
+    for (const l of buckets.description.filter(Boolean)) {
+      if (looksLikeIngredient(l)) {
+        ingredients.push(stripIngredientBullet(l));
       }
-      (looksLikeIngredient(l) ? ingredients : instructions).push(l);
+      else {
+        instructions.push(stripStepBullet(l));
+      }
     }
+    buckets.description = [];
   }
 
-  ingredients = ingredients.map(l => l.replace(/^[-*•]\s*/, "").trim()).filter(Boolean);
-  instructions = instructions.map(stripBullet).filter(Boolean);
-  return { title: title || "New Recipe", ingredients, instructions };
+  return {
+    title: title || "New Recipe",
+    description: joinParagraphs(buckets.description),
+    ingredients,
+    instructions,
+    notes: joinParagraphs(buckets.notes),
+  };
 }
 
 async function parseTextToRecipe() {
@@ -459,9 +482,9 @@ async function parseTextToRecipe() {
   state.value = "importing";
   progressMessage.value = "Reading your recipe…";
 
-  const { title, ingredients, instructions } = segmentRecipeText(input.value);
+  const segmented = segmentRecipeText(input.value);
 
-  const { data: created, error } = await api.recipes.createOne({ name: title });
+  const { data: created, error } = await api.recipes.createOne({ name: segmented.title });
   if (error || !created) {
     state.value = "idle";
     errorMessage.value = "Couldn't create the recipe. Maybe that name is already taken?";
@@ -478,9 +501,12 @@ async function parseTextToRecipe() {
 
   progressMessage.value = "Adding ingredients & steps…";
 
+  if (segmented.description) {
+    recipe.description = segmented.description;
+  }
   // Store ingredient lines as their original text — exactly how Mealie stores
   // unparsed imports. Users can structure them later via "Parse Ingredients".
-  recipe.recipeIngredient = ingredients.map<RecipeIngredient>(line => ({
+  recipe.recipeIngredient = segmented.ingredients.map<RecipeIngredient>(line => ({
     referenceId: uuid4(),
     quantity: null,
     unit: null,
@@ -489,17 +515,16 @@ async function parseTextToRecipe() {
     originalText: line,
     title: null,
   }));
-  recipe.recipeInstructions = instructions.map<RecipeStep>(text => ({
+  recipe.recipeInstructions = segmented.instructions.map<RecipeStep>(text => ({
     id: uuid4(),
     title: "",
     text,
   }));
-
-  const { error: updateError } = await api.recipes.updateOne(slug, recipe);
-  if (updateError) {
-    // The recipe was created; just send them to it to finish manually.
-    errorMessage.value = "";
+  if (segmented.notes) {
+    recipe.notes = [{ title: "Notes", text: segmented.notes }];
   }
+
+  await api.recipes.updateOne(slug, recipe);
   await celebrateAndGo(slug);
 }
 
