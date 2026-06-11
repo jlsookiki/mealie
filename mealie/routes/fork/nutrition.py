@@ -94,6 +94,7 @@ class IngredientBreakdown(BaseModel):
     grams: int | None
     source: str | None  # "usda" | "off" | None
     kcal: int | None
+    matched: str | None = None  # name of the matched USDA/OFF food, for transparency
 
 
 class NutritionOut(BaseModel):
@@ -194,6 +195,7 @@ def _parse_usda(data: dict) -> dict | None:
     if not kcal:
         return None
     return {
+        "name": str(food.get("description") or "").strip().title(),
         "kcal": kcal,
         "protein": by_num.get("203", 0),
         "fat": by_num.get("204", 0),
@@ -210,7 +212,8 @@ def _parse_off(data: dict) -> dict | None:
     products = data.get("products") or []
     if not products:
         return None
-    n = products[0].get("nutriments") or {}
+    product = products[0]
+    n = product.get("nutriments") or {}
 
     def _f(key: str) -> float:
         return float(n.get(key) or 0)
@@ -218,7 +221,10 @@ def _parse_off(data: dict) -> dict | None:
     kcal = _f("energy-kcal_100g")
     if not kcal:
         return None
+    name = str(product.get("product_name") or product.get("product_name_en") or "").strip()
+    brand = str(product.get("brands") or "").split(",")[0].strip()
     return {
+        "name": f"{name} ({brand})" if brand and brand.lower() not in name.lower() else name,
         "kcal": kcal,
         "protein": _f("proteins_100g"),
         "fat": _f("fat_100g"),
@@ -232,11 +238,16 @@ def _parse_off(data: dict) -> dict | None:
     }
 
 
-async def _lookup_usda(client: httpx.AsyncClient, term: str, api_key: str) -> dict | None:
+async def _lookup_usda(
+    client: httpx.AsyncClient,
+    term: str,
+    api_key: str,
+    data_types: str = "Foundation,SR Legacy",
+) -> dict | None:
     try:
         resp = await client.get(
             _USDA_URL,
-            params={"query": term, "pageSize": 1, "dataType": "Foundation,SR Legacy", "api_key": api_key},
+            params={"query": term, "pageSize": 1, "dataType": data_types, "api_key": api_key},
             timeout=8.0,
         )
         resp.raise_for_status()
@@ -245,31 +256,38 @@ async def _lookup_usda(client: httpx.AsyncClient, term: str, api_key: str) -> di
         return None
 
 
-async def _lookup_off(client: httpx.AsyncClient, term: str) -> dict | None:
-    try:
-        resp = await client.get(
-            _OFF_URL,
-            params={"search_terms": term, "search_simple": 1, "action": "process", "json": 1, "page_size": 1},
-            headers=_OFF_HEADERS,
-            timeout=8.0,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        result = _parse_off(data)
-        if result is None and len(term.split()) > 4:
-            # retry with first 4 words for long branded names
-            short = " ".join(term.split()[:4])
-            resp2 = await client.get(
+async def _off_search(client: httpx.AsyncClient, term: str) -> dict | None:
+    """One OFF search with a single retry on transient 5xx (their API is flaky)."""
+    for attempt in range(2):
+        try:
+            resp = await client.get(
                 _OFF_URL,
-                params={"search_terms": short, "search_simple": 1, "action": "process", "json": 1, "page_size": 1},
+                params={"search_terms": term, "search_simple": 1, "action": "process", "json": 1, "page_size": 1},
                 headers=_OFF_HEADERS,
                 timeout=8.0,
             )
-            resp2.raise_for_status()
-            result = _parse_off(resp2.json())
-        return result
-    except Exception:
-        return None
+            if resp.status_code >= 500 and attempt == 0:
+                await asyncio.sleep(0.4)
+                continue
+            resp.raise_for_status()
+            return resp.json()
+        except Exception:
+            if attempt == 0:
+                await asyncio.sleep(0.4)
+                continue
+            return None
+    return None
+
+
+async def _lookup_off(client: httpx.AsyncClient, term: str) -> dict | None:
+    data = await _off_search(client, term)
+    result = _parse_off(data) if data else None
+    if result is None and len(term.split()) > 4:
+        # retry with first 4 words for long branded names
+        short = " ".join(term.split()[:4])
+        data = await _off_search(client, short)
+        result = _parse_off(data) if data else None
+    return result
 
 
 async def _lookup_food(
@@ -285,7 +303,9 @@ async def _lookup_food(
         per100 = await _lookup_off(client, term)
         if per100:
             return per100, "off"
-        per100 = await _lookup_usda(client, term, api_key)
+        # Branded fallback: prefer USDA's packaged-food data over generic SR
+        # matches ("rice crackers" for a rice pouch was a real failure here).
+        per100 = await _lookup_usda(client, term, api_key, data_types="Branded,Foundation,SR Legacy")
         if per100:
             return per100, "usda"
     else:
@@ -372,6 +392,7 @@ class ForkNutritionController(BaseUserController):
                     grams=int(round(grams)),
                     source=source,
                     kcal=int(round(per100["kcal"] * f)),
+                    matched=per100.get("name") or None,
                 ))
 
         async with httpx.AsyncClient() as client:

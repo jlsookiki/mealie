@@ -38,7 +38,13 @@
             :key="i"
             class="nutri-row"
           >
-            <span class="nutri-row__name">{{ b.input }}</span>
+            <span class="nutri-row__name">
+              {{ b.input }}
+              <span
+                v-if="b.matched && b.matched.toLowerCase() !== b.input.toLowerCase()"
+                class="nutri-row__matched"
+              >→ {{ b.matched }}</span>
+            </span>
             <span class="nutri-row__grams">{{ b.grams != null ? `${b.grams} g` : "—" }}</span>
             <span class="nutri-row__kcal">{{ b.kcal != null ? `${b.kcal} kcal` : "no match" }}</span>
             <v-chip
@@ -73,6 +79,7 @@ interface Breakdown {
   grams: number | null;
   kcal: number | null;
   source: "usda" | "off" | null;
+  matched?: string | null;
 }
 interface AnalyzeResult {
   nutrition: Partial<Nutrition>;
@@ -147,6 +154,12 @@ async function calculate() {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.nutri-row__matched {
+  display: block;
+  opacity: 0.55;
+  font-size: 0.72rem;
 }
 .nutri-row__grams,
 .nutri-row__kcal {

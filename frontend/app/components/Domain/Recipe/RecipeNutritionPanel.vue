@@ -70,7 +70,7 @@
         </v-btn>
       </template>
 
-      <!-- Empty state: one-click estimate -->
+      <!-- Empty state: estimate via review dialog -->
       <template v-else>
         <p class="nutrition-panel__hint mb-3">
           No nutrition info yet — estimate it from the ingredients.
@@ -80,8 +80,7 @@
           variant="tonal"
           rounded="lg"
           size="small"
-          :loading="estimating"
-          @click="estimateAndSave"
+          @click="dialogOpen = true"
         >
           <v-icon
             start
@@ -94,27 +93,29 @@
         </p>
       </template>
     </v-card-text>
+
+    <RecipeNutritionEstimateDialog
+      v-model="dialogOpen"
+      v-model:recipe="recipe"
+    />
   </v-card>
 </template>
 
 <script setup lang="ts">
 import { mdiCalculatorVariant } from "@mdi/js";
-import type { Nutrition, Recipe } from "~/lib/api/types/recipe";
+import type { Recipe } from "~/lib/api/types/recipe";
 import type { NoUndefinedField } from "~/lib/api/types/non-generated";
-import { useUserApi } from "~/composables/api";
-import { useIngredientTextParser, useNutritionLabels } from "~/composables/recipes";
+import { useNutritionLabels } from "~/composables/recipes";
 import { useLoggedInState } from "~/composables/use-logged-in-state";
-import { alert } from "~/composables/use-toast";
+import RecipeNutritionEstimateDialog from "~/components/Domain/Recipe/RecipeNutritionEstimateDialog.vue";
 
 const recipe = defineModel<NoUndefinedField<Recipe>>({ required: true });
 
-const api = useUserApi();
 const { labels } = useNutritionLabels();
-const { ingredientToParserString } = useIngredientTextParser();
 const { isOwnGroup } = useLoggedInState();
 
 const detailsOpen = ref(false);
-const estimating = ref(false);
+const dialogOpen = ref(false);
 
 const MACRO_KEYS = [
   { key: "proteinContent", label: "Protein" },
@@ -170,40 +171,6 @@ const servingCaption = computed(() => {
   const servings = recipe.value.recipeServings || recipe.value.recipeYieldQuantity;
   return servings && servings > 0 ? `per serving · ${servings} servings` : "per recipe";
 });
-
-async function estimateAndSave() {
-  estimating.value = true;
-  try {
-    const strings = recipe.value.recipeIngredient.map(ingredientToParserString).filter(Boolean);
-    const { data: parsed } = await api.recipes.parseIngredients("nlp", strings);
-    const ingredients = (parsed ?? []).map(p => p.ingredient);
-    const servings = recipe.value.recipeServings || recipe.value.recipeYieldQuantity || 1;
-
-    const { data: res } = await api.recipes.estimateNutrition(ingredients, servings);
-    if (!res) {
-      throw new Error("No response");
-    }
-
-    const nutrition: Nutrition = { ...recipe.value.nutrition, ...res.nutrition };
-    const settings = { ...recipe.value.settings, showNutrition: true };
-
-    const { error } = await api.recipes.patchOne(recipe.value.slug, { nutrition, settings });
-    if (error) {
-      throw new Error("Save failed");
-    }
-
-    recipe.value.nutrition = nutrition;
-    recipe.value.settings = settings as NoUndefinedField<Recipe>["settings"];
-    alert.success(`Estimated nutrition — matched ${res.matched} of ${res.total} ingredients`);
-  }
-  catch (e) {
-    console.error(e);
-    alert.error("Couldn't estimate nutrition. Please try again.");
-  }
-  finally {
-    estimating.value = false;
-  }
-}
 </script>
 
 <style scoped>
