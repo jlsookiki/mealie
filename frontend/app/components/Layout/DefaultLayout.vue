@@ -10,73 +10,42 @@
       :top-link="topLinks"
       :secondary-links="cookbookLinks || []"
     >
-      <v-menu
-        offset-y
-        nudge-bottom="5"
-        close-delay="50"
-        nudge-right="15"
+      <v-btn
+        v-if="isOwnGroup"
+        rounded
+        size="large"
+        class="ml-2 mt-3"
+        variant="elevated"
+        elevation="2"
+        :color="$vuetify.theme.current.dark ? 'background-lighten-1' : 'background-darken-1'"
+        @click="quickAdd = true"
       >
-        <template #activator="{ props }">
-          <v-btn
-            v-if="isOwnGroup"
-            rounded
-            size="large"
-            class="ml-2 mt-3"
-            v-bind="props"
-            variant="elevated"
-            elevation="2"
-            :color="$vuetify.theme.current.dark ? 'background-lighten-1' : 'background-darken-1'"
-          >
-            <v-icon
-              start
-              size="large"
-              color="primary"
-            >
-              {{ $globals.icons.createAlt }}
-            </v-icon>
-            {{ $t("general.create") }}
-          </v-btn>
-        </template>
-        <v-list
-          density="comfortable"
-          class="mb-0 mt-1 py-0"
-          variant="flat"
+        <v-icon
+          start
+          size="large"
+          color="primary"
         >
-          <template v-for="(item, index) in createLinks">
-            <div
-              v-if="!item.hide"
-              :key="item.title"
-            >
-              <v-divider
-                v-if="item.insertDivider"
-                :key="index"
-                class="mx-2"
-              />
-              <v-list-item
-                v-if="!item.restricted || isOwnGroup"
-                :key="item.title"
-                :to="item.to"
-                exact
-                class="my-1"
-              >
-                <template #prepend>
-                  <v-icon
-                    size="40"
-                    :icon="item.icon"
-                  />
-                </template>
-                <v-list-item-title class="font-weight-medium" style="font-size: small;">
-                  {{ item.title }}
-                </v-list-item-title>
-                <v-list-item-subtitle class="font-weight-medium" style="font-size: small;">
-                  {{ item.subtitle }}
-                </v-list-item-subtitle>
-              </v-list-item>
-            </div>
-          </template>
-        </v-list>
-      </v-menu>
+          {{ $globals.icons.createAlt }}
+        </v-icon>
+        {{ $t("general.create") }}
+      </v-btn>
     </AppSidebar>
+
+    <RecipeQuickAddDialog v-model="quickAdd" />
+
+    <v-btn
+      v-if="!lgAndUp && isOwnGroup"
+      class="quick-add-fab"
+      icon
+      color="primary"
+      elevation="6"
+      size="large"
+      @click="quickAdd = true"
+    >
+      <v-icon size="28">
+        {{ $globals.icons.createAlt }}
+      </v-icon>
+    </v-btn>
 
     <AppBottomNav
       v-if="!lgAndUp"
@@ -100,7 +69,6 @@
 <script setup lang="ts">
 import { useLoggedInState } from "~/composables/use-logged-in-state";
 import type { SideBarLink } from "~/types/application-types";
-import { useGroupSelf } from "~/composables/use-groups";
 import { useCookbookPreferences } from "~/composables/use-users/preferences";
 import { useCookbookStore, usePublicCookbookStore } from "~/composables/store/use-cookbook-store";
 import type { ReadCookBook } from "~/lib/api/types/cookbook";
@@ -111,10 +79,11 @@ const display = useDisplay();
 const lgAndUp = display.lgAndUp;
 const auth = useMealieAuth();
 const { isOwnGroup } = useLoggedInState();
-const { group } = useGroupSelf();
 
 const route = useRoute();
 const groupSlug = computed(() => route.params.groupSlug as string || auth.user.value?.groupSlug || "");
+
+const quickAdd = ref(false);
 
 const cookbookPreferences = useCookbookPreferences();
 const ownCookbookStore = computed(() => isOwnGroup.value ? useCookbookStore(i18n) : null);
@@ -137,8 +106,6 @@ const cookbooks = computed(() => {
   }
   return [];
 });
-
-const showImageImport = computed(() => group.value?.aiProviderSettings?.imageProviderEnabled);
 
 const sidebar = ref<boolean>(false);
 onMounted(() => {
@@ -197,36 +164,6 @@ const cookbookLinks = computed<SideBarLink[]>(() => {
     return [...ownLinks, ...links];
   }
 });
-
-const createLinks = computed(() => [
-  {
-    insertDivider: false,
-    icon: $globals.icons.link,
-    title: i18n.t("general.import"),
-    subtitle: i18n.t("new-recipe.import-by-url"),
-    to: `/g/${groupSlug.value}/r/create/url`,
-    restricted: true,
-    hide: false,
-  },
-  {
-    insertDivider: false,
-    icon: $globals.icons.fileImage,
-    title: i18n.t("recipe.create-from-images"),
-    subtitle: i18n.t("recipe.create-recipe-from-images"),
-    to: `/g/${groupSlug.value}/r/create/image`,
-    restricted: true,
-    hide: !showImageImport.value,
-  },
-  {
-    insertDivider: true,
-    icon: $globals.icons.edit,
-    title: i18n.t("general.create"),
-    subtitle: i18n.t("new-recipe.create-manually"),
-    to: `/g/${groupSlug.value}/r/create/new`,
-    restricted: true,
-    hide: false,
-  },
-]);
 
 // Primary destinations for the mobile bottom nav (excludes nested/grouped links).
 const bottomNavLinks = computed<SideBarLink[]>(() =>
@@ -299,3 +236,12 @@ const topLinks = computed<SideBarLink[]>(() => [
   },
 ]);
 </script>
+
+<style scoped>
+.quick-add-fab {
+  position: fixed;
+  right: 16px;
+  bottom: calc(80px + env(safe-area-inset-bottom));
+  z-index: 2011;
+}
+</style>
