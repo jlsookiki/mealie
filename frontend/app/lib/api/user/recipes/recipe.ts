@@ -253,7 +253,15 @@ export class RecipeAPI extends BaseCRUDAPI<CreateRecipe, Recipe, Recipe> {
         cholesterolContent: string;
         saturatedFatContent: string;
       };
-      breakdown: { input: string; grams: number | null; source: "usda" | "off" | null; kcal: number | null; matched: string | null }[];
+      breakdown: {
+        input: string;
+        grams: number | null;
+        source: "usda" | "off" | "nutritionix" | null;
+        kcal: number | null;
+        matched: string | null;
+        sources: { source: "usda" | "off" | "nutritionix"; name: string | null; kcalPer100: number | null }[];
+        agreement: "single" | "agree" | "divergent" | "none" | null;
+      }[];
       servings: number;
       matched: number;
       total: number;

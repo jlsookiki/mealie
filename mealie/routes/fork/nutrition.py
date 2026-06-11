@@ -2,13 +2,16 @@
 Fork-specific route: POST /api/fork/nutrition
 
 Given a recipe's parsed ingredients + serving count, looks up nutrition from
-USDA FoodData Central (generic foods) and Open Food Facts (branded/packaged),
-converts each ingredient to grams, sums totals, divides by servings, and
-returns per-serving nutrition with a per-ingredient breakdown.
+three sources concurrently — USDA FoodData Central, Open Food Facts, and
+(when configured) Nutritionix — cross-references them per ingredient, converts
+to grams, sums totals, divides by servings, and returns per-serving nutrition
+with a per-ingredient breakdown that includes every source's value.
 
-Source routing:
-- looksBranded → try OFF first, USDA fallback
-- generic → try USDA first, OFF fallback
+Cross-referencing:
+- All available sources are queried for each ingredient.
+- 3+ matches → median calories wins (robust to a single bad match).
+- 2 matches → higher-priority source for the recipe type (branded vs generic).
+- Disagreement beyond 25% is flagged so a wrong match is visible.
 """
 
 import asyncio
@@ -89,12 +92,21 @@ class NutritionEstimateRequest(BaseModel):
     servings: float
 
 
+class SourceValue(BaseModel):
+    """One source's match for an ingredient, for cross-referencing."""
+    source: str  # "usda" | "off" | "nutritionix"
+    name: str | None = None
+    kcalPer100: int | None = None
+
+
 class IngredientBreakdown(BaseModel):
     input: str
     grams: int | None
-    source: str | None  # "usda" | "off" | None
+    source: str | None  # primary source used for the totals
     kcal: int | None
-    matched: str | None = None  # name of the matched USDA/OFF food, for transparency
+    matched: str | None = None  # name of the matched food, for transparency
+    sources: list[SourceValue] = []  # every source that returned a value
+    agreement: str | None = None  # "single" | "agree" | "divergent" | None
 
 
 class NutritionOut(BaseModel):
@@ -180,6 +192,7 @@ def _looks_branded(query: str) -> bool:
 _USDA_URL = "https://api.nal.usda.gov/fdc/v1/foods/search"
 _OFF_URL = "https://world.openfoodfacts.org/cgi/search.pl"
 _OFF_HEADERS = {"User-Agent": "MealieFork/1.0"}
+_NUTRITIONIX_URL = "https://trackapi.nutritionix.com/v2/natural/nutrients"
 
 
 def _parse_usda(data: dict) -> dict | None:
@@ -290,33 +303,106 @@ async def _lookup_off(client: httpx.AsyncClient, term: str) -> dict | None:
     return result
 
 
-async def _lookup_food(
+def _parse_nutritionix(data: dict) -> dict | None:
+    foods = data.get("foods") or []
+    if not foods:
+        return None
+    food = foods[0]
+    swg = float(food.get("serving_weight_grams") or 0)
+    kcal_serv = float(food.get("nf_calories") or 0)
+    if not swg or not kcal_serv:
+        return None
+    # Nutritionix returns nutrients for the parsed serving; normalize to per-100g.
+    f = 100.0 / swg
+
+    def _n(key: str) -> float:
+        return float(food.get(key) or 0) * f
+
+    name = str(food.get("food_name") or "").strip().title()
+    brand = str(food.get("brand_name") or "").strip()
+    return {
+        "name": f"{name} ({brand})" if brand and brand.lower() not in name.lower() else name,
+        "kcal": kcal_serv * f,
+        "protein": _n("nf_protein"),
+        "fat": _n("nf_total_fat"),
+        "carb": _n("nf_total_carbohydrate"),
+        "fiber": _n("nf_dietary_fiber"),
+        "sugar": _n("nf_sugars"),
+        "sodium_mg": _n("nf_sodium"),  # already mg
+        "chol_mg": _n("nf_cholesterol"),  # already mg
+        "sat_fat": _n("nf_saturated_fat"),
+    }
+
+
+async def _lookup_nutritionix(client: httpx.AsyncClient, term: str, app_id: str, app_key: str) -> dict | None:
+    """Nutritionix natural-language nutrients endpoint. Returns None if unconfigured."""
+    if not app_id or not app_key:
+        return None
+    try:
+        resp = await client.post(
+            _NUTRITIONIX_URL,
+            json={"query": term},
+            headers={"x-app-id": app_id, "x-app-key": app_key, "Content-Type": "application/json"},
+            timeout=8.0,
+        )
+        resp.raise_for_status()
+        return _parse_nutritionix(resp.json())
+    except Exception:
+        return None
+
+
+async def _lookup_candidates(
     client: httpx.AsyncClient,
     query: str,
-    api_key: str,
-) -> tuple[dict, str] | None:
-    """Return (per100, source) or None. Routes branded → OFF first, generic → USDA first."""
+    usda_key: str,
+    nx_id: str,
+    nx_key: str,
+) -> tuple[list[dict], bool]:
+    """Query every available source concurrently. Returns (candidates, branded).
+
+    Each candidate is a per-100g dict tagged with its "source". Cross-referencing
+    multiple sources lets us pick a consensus value and flag disagreement (a wrong
+    branded match — e.g. a rice pouch resolving to 'rice crackers' — stands out)."""
     term = _clean_query(query) or query
     branded = _looks_branded(query)
+    usda_types = "Branded,Foundation,SR Legacy" if branded else "Foundation,SR Legacy"
 
-    if branded:
-        per100 = await _lookup_off(client, term)
-        if per100:
-            return per100, "off"
-        # Branded fallback: prefer USDA's packaged-food data over generic SR
-        # matches ("rice crackers" for a rice pouch was a real failure here).
-        per100 = await _lookup_usda(client, term, api_key, data_types="Branded,Foundation,SR Legacy")
-        if per100:
-            return per100, "usda"
+    usda, off, nx = await asyncio.gather(
+        _lookup_usda(client, term, usda_key, data_types=usda_types),
+        _lookup_off(client, term),
+        _lookup_nutritionix(client, term, nx_id, nx_key),
+    )
+
+    candidates: list[dict] = []
+    for src, per100 in (("usda", usda), ("off", off), ("nutritionix", nx)):
+        if per100 and per100.get("kcal"):
+            candidates.append({**per100, "source": src})
+    return candidates, branded
+
+
+def _select_primary(candidates: list[dict], branded: bool) -> tuple[dict | None, str]:
+    """Cross-reference candidates → (primary per100, agreement).
+
+    - 1 source  → use it ("single")
+    - 3+ sources → median by kcal (robust to a single bad match)
+    - 2 sources → prefer the higher-priority source for the recipe type
+    Agreement is "agree" when the spread is within 25%, else "divergent"."""
+    if not candidates:
+        return None, "none"
+    if len(candidates) == 1:
+        return candidates[0], "single"
+
+    by_kcal = sorted(candidates, key=lambda c: c["kcal"])
+    lo, hi = by_kcal[0]["kcal"], by_kcal[-1]["kcal"]
+    mid_kcal = by_kcal[len(by_kcal) // 2]["kcal"]
+    agreement = "agree" if (hi - lo) / max(mid_kcal, 1) <= 0.25 else "divergent"
+
+    if len(candidates) >= 3:
+        primary = by_kcal[len(by_kcal) // 2]  # median defeats a lone outlier
     else:
-        per100 = await _lookup_usda(client, term, api_key)
-        if per100:
-            return per100, "usda"
-        per100 = await _lookup_off(client, term)
-        if per100:
-            return per100, "off"
-
-    return None
+        order = ["off", "nutritionix", "usda"] if branded else ["usda", "nutritionix", "off"]
+        primary = min(candidates, key=lambda c: order.index(c["source"]) if c["source"] in order else 9)
+    return primary, agreement
 
 
 def _round1(n: float) -> str:
@@ -337,6 +423,8 @@ class ForkNutritionController(BaseUserController):
         Looks up USDA FoodData Central and Open Food Facts concurrently.
         """
         api_key = self.settings.USDA_API_KEY
+        nx_id = self.settings.NUTRITIONIX_APP_ID
+        nx_key = self.settings.NUTRITIONIX_APP_KEY
         servings = max(1, int(round(body.servings))) if body.servings and body.servings > 0 else 1
 
         totals: dict[str, float] = {
@@ -370,29 +458,37 @@ class ForkNutritionController(BaseUserController):
                 return
 
             grams = _to_grams(ing.quantity, unit_name, food_name or ing.note or "")
-            hit = await _lookup_food(client, query, api_key)
+            candidates, branded = await _lookup_candidates(client, query, api_key, nx_id, nx_key)
+            primary, agreement = _select_primary(candidates, branded)
 
-            if hit is None:
+            sources_out = [
+                SourceValue(source=c["source"], name=c.get("name") or None, kcalPer100=int(round(c["kcal"])))
+                for c in sorted(candidates, key=lambda c: c["kcal"])
+            ]
+
+            if primary is None:
                 async with lock:
                     breakdown.append(IngredientBreakdown(
                         input=query,
                         grams=int(round(grams)),
                         source=None,
                         kcal=None,
+                        agreement="none",
                     ))
                 return
 
-            per100, source = hit
             f = grams / 100.0
             async with lock:
                 for k in totals:
-                    totals[k] += per100.get(k, 0) * f
+                    totals[k] += primary.get(k, 0) * f
                 breakdown.append(IngredientBreakdown(
                     input=query,
                     grams=int(round(grams)),
-                    source=source,
-                    kcal=int(round(per100["kcal"] * f)),
-                    matched=per100.get("name") or None,
+                    source=primary["source"],
+                    kcal=int(round(primary["kcal"] * f)),
+                    matched=primary.get("name") or None,
+                    sources=sources_out,
+                    agreement=agreement,
                 ))
 
         async with httpx.AsyncClient() as client:

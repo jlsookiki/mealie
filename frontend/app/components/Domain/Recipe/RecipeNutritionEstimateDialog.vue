@@ -81,6 +81,15 @@
           >
             {{ result.total - result.matched }} ingredient(s) had no match and are NOT counted — totals run low.
           </v-alert>
+          <v-alert
+            v-if="divergentCount > 0"
+            type="info"
+            variant="tonal"
+            density="compact"
+            class="mb-3"
+          >
+            {{ divergentCount }} ingredient(s) where sources disagree (⚠) — double-check those matches.
+          </v-alert>
 
           <div class="estimate-dialog__breakdown">
             <div
@@ -89,7 +98,16 @@
               class="estimate-dialog__row"
             >
               <div class="estimate-dialog__row-main">
-                <span class="estimate-dialog__row-input">{{ b.input }}</span>
+                <span class="estimate-dialog__row-input">
+                  {{ b.input }}
+                  <v-icon
+                    v-if="b.agreement === 'divergent'"
+                    :icon="mdiAlert"
+                    size="13"
+                    color="warning"
+                    class="ml-1"
+                  />
+                </span>
                 <span
                   v-if="b.matched && !sameish(b.input, b.matched)"
                   class="estimate-dialog__row-matched"
@@ -98,13 +116,26 @@
                   v-else-if="!b.source"
                   class="estimate-dialog__row-nomatch"
                 >no match</span>
+                <!-- Per-source cross-reference (kcal/100g), so a bad match stands out -->
+                <span
+                  v-if="b.sources && b.sources.length > 1"
+                  class="estimate-dialog__row-sources"
+                >
+                  <span
+                    v-for="s in b.sources"
+                    :key="s.source"
+                    class="estimate-dialog__chip"
+                    :class="{ 'estimate-dialog__chip--primary': s.source === b.source }"
+                  >{{ sourceLabel(s.source) }} {{ s.kcalPer100 }}</span>
+                </span>
               </div>
               <span class="estimate-dialog__row-kcal">{{ b.kcal != null ? `${b.kcal} kcal` : "—" }}</span>
             </div>
           </div>
           <p class="estimate-dialog__caption mt-2 mb-0">
-            Check the matches above — a wrong match skews the totals. Mismatched lines can be fixed by renaming the
-            ingredient and re-estimating.
+            Cross-referenced across USDA, Open Food Facts{{ hasNutritionix ? ", and Nutritionix" : "" }} (kcal per 100g
+            shown per source; the one used is highlighted). A wrong match can be fixed by renaming the ingredient and
+            re-estimating.
           </p>
         </template>
 
@@ -153,7 +184,7 @@
 </template>
 
 <script setup lang="ts">
-import { mdiClose } from "@mdi/js";
+import { mdiAlert, mdiClose } from "@mdi/js";
 import type { Nutrition, Recipe } from "~/lib/api/types/recipe";
 import type { NoUndefinedField } from "~/lib/api/types/non-generated";
 import { useUserApi } from "~/composables/api";
@@ -191,6 +222,19 @@ function rounded(v: string | null | undefined): string {
 function sameish(a: string, b: string): boolean {
   return a.trim().toLowerCase() === b.trim().toLowerCase();
 }
+
+const SOURCE_LABELS: Record<string, string> = { usda: "USDA", off: "OFF", nutritionix: "NX" };
+function sourceLabel(s: string): string {
+  return SOURCE_LABELS[s] ?? s;
+}
+
+const divergentCount = computed(() =>
+  (result.value?.breakdown ?? []).filter(b => b.agreement === "divergent").length,
+);
+
+const hasNutritionix = computed(() =>
+  (result.value?.breakdown ?? []).some(b => (b.sources ?? []).some(s => s.source === "nutritionix")),
+);
 
 async function runEstimate() {
   errorMessage.value = "";
@@ -313,6 +357,29 @@ async function save() {
   color: rgb(var(--v-theme-warning));
   font-size: 0.76rem;
   font-weight: 600;
+}
+
+.estimate-dialog__row-sources {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 3px;
+}
+
+.estimate-dialog__chip {
+  font-size: 0.66rem;
+  font-variant-numeric: tabular-nums;
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: rgba(var(--v-border-color), 0.08);
+  opacity: 0.7;
+}
+
+.estimate-dialog__chip--primary {
+  background: rgba(var(--v-theme-primary), 0.14);
+  color: rgb(var(--v-theme-primary));
+  font-weight: 600;
+  opacity: 1;
 }
 
 .estimate-dialog__row-kcal {

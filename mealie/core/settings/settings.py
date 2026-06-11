@@ -420,6 +420,12 @@ class AppSettings(AppLoggingSettings):
     USDA_API_KEY: str = "DEMO_KEY"
     """API key for USDA FoodData Central nutrition lookups. Defaults to the rate-limited public DEMO_KEY."""
 
+    NUTRITIONIX_APP_ID: str = ""
+    """Nutritionix application id (x-app-id) — third nutrition source for cross-referencing. Empty disables it."""
+
+    NUTRITIONIX_APP_KEY: str = ""
+    """Nutritionix application key (x-app-key). Empty disables the Nutritionix source."""
+
     # ===============================================
     # OpenAI Configuration
 

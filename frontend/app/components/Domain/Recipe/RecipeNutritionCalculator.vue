@@ -51,9 +51,9 @@
               v-if="b.source"
               size="x-small"
               variant="tonal"
-              :color="b.source === 'off' ? 'accent' : 'secondary'"
+              :color="b.source === 'off' ? 'accent' : b.source === 'nutritionix' ? 'primary' : 'secondary'"
             >
-              {{ b.source === "off" ? "OFF" : "USDA" }}
+              {{ sourceLabel(b.source) }}
             </v-chip>
             <span
               v-else
@@ -78,8 +78,13 @@ interface Breakdown {
   input: string;
   grams: number | null;
   kcal: number | null;
-  source: "usda" | "off" | null;
+  source: "usda" | "off" | "nutritionix" | null;
   matched?: string | null;
+}
+
+const SOURCE_LABELS: Record<string, string> = { usda: "USDA", off: "OFF", nutritionix: "NX" };
+function sourceLabel(s: string): string {
+  return SOURCE_LABELS[s] ?? s;
 }
 interface AnalyzeResult {
   nutrition: Partial<Nutrition>;
