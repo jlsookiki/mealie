@@ -25,7 +25,7 @@
       </div>
 
       <p class="text-caption mt-2 mb-0 nutri-muted">
-        Estimated from USDA FoodData Central + Open Food Facts — approximate, review before relying on it.
+        Estimated from USDA FoodData Central (generic + branded foods) — approximate, review before relying on it.
       </p>
 
       <v-expand-transition>
@@ -87,6 +87,7 @@ const nutrition = defineModel<Nutrition>({ required: true });
 
 const api = useUserApi();
 const { ingredientToParserString } = useIngredientTextParser();
+const { estimate } = useNutritionEstimate();
 
 const loading = ref(false);
 const result = ref<AnalyzeResult | null>(null);
@@ -104,10 +105,7 @@ async function calculate() {
     const ingredients = (parsed ?? []).map(p => p.ingredient);
     const servings = props.recipe.recipeServings || props.recipe.recipeYieldQuantity || 1;
 
-    const res = await $fetch<AnalyzeResult>("/api/fork/nutrition", {
-      method: "POST",
-      body: { ingredients, servings },
-    });
+    const res = await estimate(ingredients, servings);
 
     result.value = res;
     nutrition.value = { ...nutrition.value, ...res.nutrition };

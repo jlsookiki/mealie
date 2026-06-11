@@ -1,7 +1,10 @@
-// Nutrition analysis: turn parsed ingredients into per-serving nutrition by
-// converting each to grams and looking up USDA FoodData Central (generic) with
-// an Open Food Facts fallback (branded/packaged). All estimates are approximate
-// — volume→gram uses density heuristics, counts use typical item weights.
+// Client-side nutrition estimation: convert parsed ingredients to grams and
+// look up USDA FoodData Central (generic) + Open Food Facts (branded). Runs in
+// the browser because both APIs send permissive CORS headers — which matters
+// since the production frontend is a static SPA with no server runtime.
+// All estimates are approximate.
+
+import type { Nutrition } from "~/lib/api/types/recipe";
 
 export interface AnalyzeIngredient {
   quantity?: number | null;
@@ -25,9 +28,16 @@ interface Per100 {
 export interface IngredientBreakdown {
   input: string;
   grams: number | null;
-  matched: string | null;
   source: "usda" | "off" | null;
   kcal: number | null;
+}
+
+export interface NutritionEstimate {
+  nutrition: Partial<Nutrition>;
+  breakdown: IngredientBreakdown[];
+  servings: number;
+  matched: number;
+  total: number;
 }
 
 const MASS_G: Record<string, number> = {
@@ -45,7 +55,6 @@ const VOL_ML: Record<string, number> = {
   pint: 473.176, pints: 473.176, quart: 946.353, quarts: 946.353, gallon: 3785.41,
 };
 
-// Approximate density (g/ml) by food keyword, for volume→gram conversion.
 const DENSITY: [RegExp, number][] = [
   [/oil|butter|ghee|tahini/, 0.91],
   [/flour|cocoa|powder/, 0.55],
@@ -55,7 +64,6 @@ const DENSITY: [RegExp, number][] = [
   [/salt/, 1.2],
 ];
 
-// Typical weight (g) for counted items lacking a unit, by keyword.
 const COUNT_G: [RegExp, number][] = [
   [/clove/, 3], [/egg/, 50], [/onion|pepper|apple|potato|orange/, 130],
   [/lemon|lime|tomato|peach|carrot/, 100], [/cucumber/, 200], [/banana/, 120],
@@ -66,7 +74,7 @@ function norm(s: unknown): string {
   return (s ?? "").toString().toLowerCase().trim().replace(/\.$/, "");
 }
 
-export function toGrams(qty: number | null | undefined, unitName: string, foodName: string): number {
+function toGrams(qty: number | null | undefined, unitName: string, foodName: string): number {
   const q = qty && qty > 0 ? qty : 1;
   const u = norm(unitName);
   const food = norm(foodName);
@@ -102,8 +110,12 @@ export function toGrams(qty: number | null | undefined, unitName: string, foodNa
 
 async function lookupUSDA(query: string, apiKey: string): Promise<Per100 | null> {
   try {
+    // Foundation/SR = generic whole foods; Branded = packaged products.
+    // (Open Food Facts would complement this, but its CORS-enabled endpoint
+    // lacks relevance search and its good search endpoint blocks CORS, so a
+    // pure-browser build relies on USDA alone.)
     const res = await $fetch<any>("https://api.nal.usda.gov/fdc/v1/foods/search", {
-      query: { query, pageSize: 1, dataType: "Foundation,SR Legacy", api_key: apiKey },
+      query: { query, pageSize: 1, dataType: "Foundation,SR Legacy,Branded", api_key: apiKey },
     });
     const food = res?.foods?.[0];
     if (!food) {
@@ -132,54 +144,6 @@ async function lookupUSDA(query: string, apiKey: string): Promise<Per100 | null>
   }
 }
 
-async function offSearch(term: string): Promise<any | null> {
-  const res = await $fetch<any>("https://world.openfoodfacts.org/cgi/search.pl", {
-    query: { search_terms: term, search_simple: 1, action: "process", json: 1, page_size: 1 },
-    headers: { "User-Agent": "MealieFork/1.0 (self-hosted)" },
-  });
-  return res?.products?.[0]?.nutriments ?? null;
-}
-
-async function lookupOFF(query: string): Promise<Per100 | null> {
-  try {
-    let n = await offSearch(query);
-    // Long branded names often return nothing; retry with the first few words.
-    if (!n && query.split(/\s+/).length > 4) {
-      n = await offSearch(query.split(/\s+/).slice(0, 4).join(" "));
-    }
-    if (!n) {
-      return null;
-    }
-    return {
-      kcal: n["energy-kcal_100g"] ?? 0,
-      protein: n.proteins_100g ?? 0,
-      fat: n.fat_100g ?? 0,
-      carb: n.carbohydrates_100g ?? 0,
-      fiber: n.fiber_100g ?? 0,
-      sugar: n.sugars_100g ?? 0,
-      sodiumMg: (n.sodium_100g ?? 0) * 1000,
-      cholMg: (n.cholesterol_100g ?? 0) * 1000,
-      satFat: n["saturated-fat_100g"] ?? 0,
-    };
-  }
-  catch {
-    return null;
-  }
-}
-
-function round(n: number): string {
-  return (Math.round(n * 10) / 10).toString();
-}
-
-// Packaged/branded items (a parenthetical size, or a multi-word proper name)
-// are better served by Open Food Facts than USDA's fuzzy generic search.
-function looksBranded(q: string): boolean {
-  if (/\([^)]*\b(oz|g|ml|gram|grams|each|pack|packet|count|ct)\b[^)]*\)/i.test(q)) {
-    return true;
-  }
-  return (q.match(/\b[A-Z][a-z]+/g) || []).length >= 2;
-}
-
 // Reduce an ingredient phrase to a searchable core: drop parentheticals,
 // trailing prep notes after a comma, and stray sizes.
 function cleanQuery(q: string): string {
@@ -191,22 +155,20 @@ function cleanQuery(q: string): string {
     .trim();
 }
 
-async function lookupFood(query: string, apiKey: string): Promise<{ per100: Per100; source: "usda" | "off" } | null> {
-  const branded = looksBranded(query);
+async function lookupFood(query: string, apiKey: string): Promise<{ per100: Per100; source: "usda" } | null> {
   const term = cleanQuery(query) || query;
-  const primary = branded ? "off" : "usda";
-  const first = primary === "off" ? await lookupOFF(term) : await lookupUSDA(term, apiKey);
-  if (first && first.kcal) {
-    return { per100: first, source: primary };
-  }
-  const second = primary === "off" ? await lookupUSDA(term, apiKey) : await lookupOFF(term);
-  if (second && second.kcal) {
-    return { per100: second, source: primary === "off" ? "usda" : "off" };
+  const per100 = await lookupUSDA(term, apiKey);
+  if (per100 && per100.kcal) {
+    return { per100, source: "usda" };
   }
   return null;
 }
 
-export async function analyzeNutrition(ingredients: AnalyzeIngredient[], servings: number, apiKey: string) {
+function round(n: number): string {
+  return (Math.round(n * 10) / 10).toString();
+}
+
+async function analyze(ingredients: AnalyzeIngredient[], servings: number, apiKey: string): Promise<NutritionEstimate> {
   const totals: Per100 = { kcal: 0, protein: 0, fat: 0, carb: 0, fiber: 0, sugar: 0, sodiumMg: 0, cholMg: 0, satFat: 0 };
   const breakdown: IngredientBreakdown[] = [];
 
@@ -215,19 +177,18 @@ export async function analyzeNutrition(ingredients: AnalyzeIngredient[], serving
     const unitName = typeof ing.unit === "string" ? ing.unit : (ing.unit?.name ?? "");
     const query = (foodName || ing.note || "").trim();
     if (!query) {
-      breakdown.push({ input: ing.note ?? "", grams: null, matched: null, source: null, kcal: null });
+      breakdown.push({ input: ing.note ?? "", grams: null, source: null, kcal: null });
       return;
     }
 
     const grams = toGrams(ing.quantity, unitName, foodName || ing.note || "");
-
     const hit = await lookupFood(query, apiKey);
     if (!hit) {
-      breakdown.push({ input: query, grams: Math.round(grams), matched: null, source: null, kcal: null });
+      breakdown.push({ input: query, grams: Math.round(grams), source: null, kcal: null });
       return;
     }
-    const { per100, source } = hit;
 
+    const { per100, source } = hit;
     const f = grams / 100;
     totals.kcal += per100.kcal * f;
     totals.protein += per100.protein * f;
@@ -239,11 +200,11 @@ export async function analyzeNutrition(ingredients: AnalyzeIngredient[], serving
     totals.cholMg += per100.cholMg * f;
     totals.satFat += per100.satFat * f;
 
-    breakdown.push({ input: query, grams: Math.round(grams), matched: query, source, kcal: Math.round(per100.kcal * f) });
+    breakdown.push({ input: query, grams: Math.round(grams), source, kcal: Math.round(per100.kcal * f) });
   }));
 
   const s = servings && servings > 0 ? servings : 1;
-  const nutrition = {
+  const nutrition: Partial<Nutrition> = {
     calories: round(totals.kcal / s),
     proteinContent: round(totals.protein / s),
     fatContent: round(totals.fat / s),
@@ -255,6 +216,16 @@ export async function analyzeNutrition(ingredients: AnalyzeIngredient[], serving
     saturatedFatContent: round(totals.satFat / s),
   };
 
-  const matched = breakdown.filter(b => b.source).length;
-  return { nutrition, breakdown, servings: s, matched, total: ingredients.length };
+  return { nutrition, breakdown, servings: s, matched: breakdown.filter(b => b.source).length, total: ingredients.length };
+}
+
+export function useNutritionEstimate() {
+  const config = useRuntimeConfig();
+  const apiKey = (config.public.usdaApiKey as string) || "DEMO_KEY";
+
+  function estimate(ingredients: AnalyzeIngredient[], servings: number): Promise<NutritionEstimate> {
+    return analyze(ingredients, servings, apiKey);
+  }
+
+  return { estimate };
 }
