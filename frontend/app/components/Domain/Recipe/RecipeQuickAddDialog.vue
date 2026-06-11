@@ -423,6 +423,34 @@ function joinParagraphs(lines: string[]): string {
   return lines.join("\n").replace(/\n{3,}/g, "\n\n").trim();
 }
 
+const UNICODE_FRACTIONS: Record<string, number> = {
+  "½": 0.5, "¼": 0.25, "¾": 0.75, "⅓": 1 / 3, "⅔": 2 / 3, "⅛": 0.125, "⅜": 0.375, "⅝": 0.625, "⅞": 0.875,
+};
+
+// "1.8 pounds chicken" -> { quantity: 1.8, note: "pounds chicken" }.
+// Handles decimals, fractions (1/2), mixed numbers (1 1/2), and ½-style glyphs.
+function splitQuantity(line: string): { quantity: number | null; note: string } {
+  const text = line.trim();
+  let m = text.match(/^(\d+)\s+(\d+)\/(\d+)\s+/);
+  if (m) {
+    return { quantity: Number(m[1]) + Number(m[2]) / Number(m[3]), note: text.slice(m[0].length).trim() };
+  }
+  m = text.match(/^(\d+)\/(\d+)\s+/);
+  if (m) {
+    return { quantity: Number(m[1]) / Number(m[2]), note: text.slice(m[0].length).trim() };
+  }
+  m = text.match(/^(\d+(?:\.\d+)?)?\s*([½¼¾⅓⅔⅛⅜⅝⅞])\s*/);
+  if (m && (m[1] || m[2])) {
+    const whole = m[1] ? Number(m[1]) : 0;
+    return { quantity: whole + UNICODE_FRACTIONS[m[2]], note: text.slice(m[0].length).trim() };
+  }
+  m = text.match(/^(\d+(?:\.\d+)?)\s+/);
+  if (m) {
+    return { quantity: Number(m[1]), note: text.slice(m[0].length).trim() };
+  }
+  return { quantity: null, note: text };
+}
+
 function segmentRecipeText(raw: string): SegmentedRecipe {
   const lines = raw.split("\n").map(l => l.trim());
 
@@ -504,17 +532,22 @@ async function parseTextToRecipe() {
   if (segmented.description) {
     recipe.description = segmented.description;
   }
-  // Store ingredient lines as their original text — exactly how Mealie stores
-  // unparsed imports. Users can structure them later via "Parse Ingredients".
-  recipe.recipeIngredient = segmented.ingredients.map<RecipeIngredient>(line => ({
-    referenceId: uuid4(),
-    quantity: null,
-    unit: null,
-    food: null,
-    note: line,
-    originalText: line,
-    title: null,
-  }));
+  // Pull the leading amount into the real quantity field (so scaling and the
+  // editor's quantity box work); the rest of the line stays as the note.
+  // Units/foods are left unstructured — the Parse Ingredients tool can
+  // structure them later without us auto-creating foods/units here.
+  recipe.recipeIngredient = segmented.ingredients.map<RecipeIngredient>((line) => {
+    const { quantity, note } = splitQuantity(line);
+    return {
+      referenceId: uuid4(),
+      quantity,
+      unit: null,
+      food: null,
+      note,
+      originalText: line,
+      title: null,
+    };
+  });
   recipe.recipeInstructions = segmented.instructions.map<RecipeStep>(text => ({
     id: uuid4(),
     title: "",
