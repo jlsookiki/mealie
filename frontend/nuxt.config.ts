@@ -77,6 +77,7 @@ export default defineNuxtConfig({
   runtimeConfig: {
     sessionPassword: process.env.SESSION_PASSWORD || "password-with-at-least-32-characters",
     apiUrl: process.env.API_URL || "http://localhost:9000",
+    usdaApiKey: process.env.USDA_API_KEY || "DEMO_KEY",
     public: {
       AUTH_TOKEN,
       GLOBAL_MIDDLEWARE: process.env.GLOBAL_MIDDLEWARE || undefined,
