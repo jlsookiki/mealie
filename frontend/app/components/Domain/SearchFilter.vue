@@ -17,8 +17,8 @@
         >
           <v-btn
             size="small"
-            color="accent"
-            dark
+            variant="tonal"
+            color="primary"
             v-bind="menuProps"
           >
             <slot />

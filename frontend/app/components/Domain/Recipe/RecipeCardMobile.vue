@@ -52,7 +52,7 @@
             </slot>
           </template>
           <div class="pl-4 d-flex flex-column justify-space-between align-stretch pr-2">
-            <v-list-item-title class="mt-3 mb-1 text-top text-truncate w-100">
+            <v-list-item-title class="recipe-card-mobile__title mt-3 mb-1 text-top text-truncate w-100">
               {{ name }}
             </v-list-item-title>
             <v-list-item-subtitle class="ma-0 text-top">
@@ -88,7 +88,7 @@
               />
               <div v-else class="my-0 px-1 py-0" /> <!-- Empty div to keep the layout consistent -->
               <RecipeCardRating
-                v-if="showRecipeContent"
+                v-if="showRecipeContent && rating"
                 :class="[{ 'pb-2': !isOwnGroup }, 'ml-n2']"
                 :model-value="rating"
                 :recipe-id="recipeId"
@@ -201,6 +201,12 @@ const cursor = computed(() => showRecipeContent.value ? "pointer" : "auto");
 
 .text-top {
   align-self: start !important;
+}
+
+.recipe-card-mobile__title {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 1.05rem;
 }
 
 .flat,

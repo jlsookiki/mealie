@@ -7,43 +7,38 @@
     >
       <v-card
         v-bind="hoverProps"
-        :class="{ 'on-hover': isHovering }"
+        :class="['recipe-card', { 'on-hover': isHovering }]"
         :style="{ cursor }"
         :elevation="isHovering ? 12 : 2"
         :to="recipeRoute"
-        :min-height="imageHeight + 75"
         @click.self="$emit('click')"
       >
-        <RecipeCardImage
-          small
-          :icon-size="imageHeight"
-          :height="imageHeight"
-          :slug="slug"
-          :recipe-id="recipeId"
-          :image-version="image"
-        >
-          <v-expand-transition v-if="description">
-            <div
-              v-if="isHovering"
-              class="d-flex transition-fast-in-fast-out bg-secondary v-card--reveal"
-              style="height: 100%"
-            >
-              <v-card-text class="v-card--text-show white--text">
-                <div class="descriptionWrapper">
-                  <SafeMarkdown :source="description" />
-                </div>
-              </v-card-text>
-            </div>
-          </v-expand-transition>
-        </RecipeCardImage>
-        <v-card-title class="mb-n3 px-4" style="font-size: 1.25rem;">
+        <div class="recipe-card__media">
+          <RecipeCardImage
+            small
+            :icon-size="imageHeight"
+            :height="imageHeight"
+            :slug="slug"
+            :recipe-id="recipeId"
+            :image-version="image"
+          />
+        </div>
+
+        <v-card-title class="recipe-card__title px-4 pt-3 pb-0">
           {{ name }}
         </v-card-title>
+
+        <div
+          v-if="description"
+          class="recipe-card__desc px-4 pt-1"
+        >
+          <SafeMarkdown :source="description" />
+        </div>
 
         <slot name="actions">
           <v-card-actions
             v-if="showRecipeContent"
-            class="px-1"
+            class="px-2 pb-1"
           >
             <RecipeFavoriteBadge
               v-if="isOwnGroup"
@@ -53,6 +48,7 @@
             <div v-else class="px-1" /> <!-- Empty div to keep the layout consistent -->
 
             <RecipeCardRating
+              v-if="rating"
               :model-value="rating"
               :recipe-id="recipeId"
             />
@@ -140,29 +136,43 @@ const recipeRoute = computed<string>(() => {
 const cursor = computed(() => showRecipeContent.value ? "pointer" : "auto");
 </script>
 
-<style>
-.v-card--reveal {
-  align-items: center;
-  bottom: 0;
-  justify-content: center;
-  opacity: 0.8;
-  position: absolute;
-  width: 100%;
-}
-.v-card--text-show {
-  opacity: 1 !important;
-}
-.headerClass {
-  white-space: nowrap;
-  word-break: normal;
+<style scoped>
+.recipe-card {
   overflow: hidden;
-  text-overflow: ellipsis;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
 }
-.descriptionWrapper {
+.recipe-card.on-hover {
+  transform: translateY(-3px);
+}
+.recipe-card__media {
+  overflow: hidden;
+}
+.recipe-card__media :deep(.v-img) {
+  transition: transform 0.4s ease;
+}
+.recipe-card.on-hover .recipe-card__media :deep(.v-img) {
+  transform: scale(1.05);
+}
+.recipe-card__title {
+  font-size: 1.2rem;
+  line-height: 1.25;
+  font-weight: 600;
+  white-space: normal;
+  word-break: normal;
   display: -webkit-box;
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 8;
-  line-clamp: 8;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+}
+.recipe-card__desc {
+  font-size: 0.85rem;
+  line-height: 1.4;
+  color: rgba(var(--v-theme-on-surface), 0.6);
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
   overflow: hidden;
 }
 </style>

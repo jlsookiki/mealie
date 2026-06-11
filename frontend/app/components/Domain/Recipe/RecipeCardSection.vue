@@ -4,14 +4,7 @@
       v-if="!disableToolbar"
       class="align-center pb-2"
     >
-      <v-icon
-        v-if="title"
-        size="large"
-        start
-      >
-        {{ displayTitleIcon }}
-      </v-icon>
-      <span class="text-headline-small">{{ title }}</span>
+      <span class="text-headline-medium ml-3">{{ title }}</span>
       <v-spacer />
       <v-btn
         :icon="$vuetify.display.xs"
@@ -106,6 +99,29 @@
       />
     </v-row>
     <div v-if="recipes && ready">
+      <div
+        v-if="recipes.length === 0 && !loading"
+        class="text-center py-16"
+      >
+        <p class="text-headline-small mb-2">
+          No recipes here yet
+        </p>
+        <p class="text-body-2 mb-6" style="opacity: 0.6;">
+          Try a different search, or add something new to your collection.
+        </p>
+        <v-btn
+          v-if="isOwnGroup"
+          color="primary"
+          variant="tonal"
+          size="large"
+          :to="`/g/${groupSlug}/r/create/url`"
+        >
+          <v-icon start>
+            {{ $globals.icons.link }}
+          </v-icon>
+          {{ $t("general.import") }}
+        </v-btn>
+      </div>
       <div class="mt-2">
         <v-row v-if="!useMobileCards">
           <v-col
@@ -218,10 +234,6 @@ const { $globals } = useNuxtApp();
 const { isOwnGroup } = useLoggedInState();
 const useMobileCards = computed(() => {
   return display.smAndDown.value || preferences.value.useMobileCards;
-});
-
-const displayTitleIcon = computed(() => {
-  return props.icon || $globals.icons.tags;
 });
 
 const sortLoading = ref(false);

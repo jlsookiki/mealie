@@ -43,19 +43,16 @@
       class="d-flex flex-column align-center w-100"
       max-width="600"
     >
-      <v-toolbar
-        color="primary"
-        class="d-flex justify-center mb-4"
-        dark
-      >
-        <v-toolbar-title class="text-h4 text-center">
-          Mealie
-        </v-toolbar-title>
-      </v-toolbar>
-      <AppLogo :size="100" />
-      <v-card-title class="text-h5 justify-center pb-3">
-        {{ $t('user.sign-in') }}
+      <AppLogo
+        :size="100"
+        class="mt-8"
+      />
+      <v-card-title class="text-h4 text-primary pb-0">
+        Mealie
       </v-card-title>
+      <v-card-subtitle class="pb-4">
+        {{ $t('user.sign-in') }}
+      </v-card-subtitle>
       <v-card-text class="w-100">
         <v-form @submit.prevent="authenticate">
           <v-text-field
