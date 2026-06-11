@@ -69,17 +69,9 @@
       </v-card-text>
     </v-card>
 
-    <RecipeNutrition
-      v-if="recipe.settings.showNutrition"
-      v-model="recipe.nutrition"
-      class="mt-4"
-      :edit="isEditForm"
-    />
-    <RecipeNutritionCalculator
-      v-if="isEditForm"
-      v-model="recipe.nutrition"
-      :recipe="recipe"
-      @enable-nutrition="recipe.settings.showNutrition = true"
+    <RecipeNutritionPanel
+      v-if="!isEditForm"
+      v-model="recipe"
     />
     <RecipeAssets
       v-if="recipe.settings.showAssets"
@@ -96,7 +88,7 @@ import { usePageState } from "~/composables/recipe-page/shared-state";
 import type { NoUndefinedField } from "~/lib/api/types/non-generated";
 import type { Recipe } from "~/lib/api/types/recipe";
 import RecipeOrganizerSelector from "@/components/Domain/Recipe/RecipeOrganizerSelector.vue";
-import RecipeNutrition from "~/components/Domain/Recipe/RecipeNutrition.vue";
+import RecipeNutritionPanel from "~/components/Domain/Recipe/RecipeNutritionPanel.vue";
 import RecipeChips from "@/components/Domain/Recipe/RecipeChips.vue";
 import RecipeAssets from "@/components/Domain/Recipe/RecipeAssets.vue";
 

@@ -87,6 +87,12 @@
             class="editor-section mt-6"
             style="--editor-stagger: 2"
           />
+          <RecipeEditorNutrition
+            v-if="isEditForm"
+            v-model="recipe"
+            class="editor-section mt-6"
+            style="--editor-stagger: 2"
+          />
           <div v-if="!isEditMode">
             <RecipePageScale v-model="scale" :recipe="recipe" />
           </div>
@@ -233,6 +239,7 @@ import RecipePageEditorSettings from "./RecipePageParts/RecipePageEditorSettings
 import RecipePageFooter from "./RecipePageParts/RecipePageFooter.vue";
 import RecipePageHeader from "./RecipePageParts/RecipePageHeader.vue";
 import RecipeEditorIngredients from "./RecipePageParts/RecipeEditorIngredients.vue";
+import RecipeEditorNutrition from "./RecipePageParts/RecipeEditorNutrition.vue";
 import RecipePageIngredientToolsView from "./RecipePageParts/RecipePageIngredientToolsView.vue";
 import RecipePageInstructions from "./RecipePageParts/RecipePageInstructions.vue";
 import RecipePageOrganizers from "./RecipePageParts/RecipePageOrganizers.vue";
