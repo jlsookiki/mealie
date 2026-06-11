@@ -12,10 +12,24 @@ body,
 
 // Editorial serif for headings, card/toolbar titles, and the wordmark.
 // Covers both legacy (.text-h*) and Vuetify 4 Material-3 (.text-display/headline/title) classes.
-h1, h2, h3, h4, h5, h6,
-.text-h1, .text-h2, .text-h3, .text-h4, .text-h5, .text-h6,
-.text-display-large, .text-display-medium, .text-display-small,
-.text-headline-large, .text-headline-medium, .text-headline-small,
+h1,
+h2,
+h3,
+h4,
+h5,
+h6,
+.text-h1,
+.text-h2,
+.text-h3,
+.text-h4,
+.text-h5,
+.text-h6,
+.text-display-large,
+.text-display-medium,
+.text-display-small,
+.text-headline-large,
+.text-headline-medium,
+.text-headline-small,
 .text-title-large,
 .v-card-title,
 .v-toolbar-title {
@@ -23,10 +37,20 @@ h1, h2, h3, h4, h5, h6,
   letter-spacing: -0.01em;
 }
 
-h1, h2, h3, h4,
-.text-h1, .text-h2, .text-h3, .text-h4,
-.text-display-large, .text-display-medium, .text-display-small,
-.text-headline-large, .text-headline-medium, .text-headline-small {
+h1,
+h2,
+h3,
+h4,
+.text-h1,
+.text-h2,
+.text-h3,
+.text-h4,
+.text-display-large,
+.text-display-medium,
+.text-display-small,
+.text-headline-large,
+.text-headline-medium,
+.text-headline-small {
   font-weight: 600;
 }
 

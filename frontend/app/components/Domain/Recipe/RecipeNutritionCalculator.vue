@@ -84,6 +84,7 @@ interface AnalyzeResult {
 
 const props = defineProps<{ recipe: NoUndefinedField<Recipe> }>();
 const nutrition = defineModel<Nutrition>({ required: true });
+const emit = defineEmits<{ "enable-nutrition": [] }>();
 
 const api = useUserApi();
 const { ingredientToParserString } = useIngredientTextParser();
@@ -111,10 +112,8 @@ async function calculate() {
 
     result.value = res;
     nutrition.value = { ...nutrition.value, ...res.nutrition };
-    // Surface the nutrition card now that we've populated it.
-    if (props.recipe.settings) {
-      props.recipe.settings.showNutrition = true;
-    }
+    // Ask the parent to surface the nutrition card now that it has data.
+    emit("enable-nutrition");
     alert.success(`Estimated nutrition — matched ${res.matched} of ${res.total} ingredients`);
   }
   catch (e) {

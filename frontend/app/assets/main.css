@@ -8,7 +8,9 @@
 /* Soft, warm shadows instead of Material's hard elevation */
 .v-card.v-card--variant-elevated {
   box-shadow: var(--ms-shadow-sm);
-  transition: box-shadow 0.2s ease, transform 0.2s ease;
+  transition:
+    box-shadow 0.2s ease,
+    transform 0.2s ease;
 }
 .v-card.v-card--variant-elevated.on-hover {
   box-shadow: var(--ms-shadow-md) !important;

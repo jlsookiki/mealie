@@ -20,15 +20,34 @@
       @update:model-value="toggleIsParsing"
       @save="saveParsedIngredients"
     />
+    <RecipePageEditorSettings
+      v-model="settingsOpen"
+      v-model:recipe="recipe"
+    />
     <v-container v-show="!isCookMode" key="recipe-page" class="px-0" :class="{ 'pa-0': $vuetify.display.smAndDown }">
-      <v-card flat class="d-print-none">
+      <!-- Keyed by mode so the whole subtree remounts on view<->edit, guaranteeing
+           slot re-render and a clean entrance for the editor's staggered animations. -->
+      <v-card :key="isEditMode ? 'editor' : 'viewer'" flat class="d-print-none" :class="{ 'recipe-editor': isEditMode }">
         <RecipePageHeader
+          v-if="!isEditMode"
           :recipe="recipe"
           :recipe-scale="scale"
           :landscape="landscape"
           @save="saveRecipe"
           @delete="deleteRecipe"
           @close="closeEditor"
+        />
+        <RecipePageEditorBar
+          v-if="isEditMode"
+          :name="recipe.name || ''"
+          :dirty="isDirty"
+          :save-state="saveState"
+          :is-json-mode="isEditJSON"
+          @save="saveRecipe"
+          @close="closeEditor"
+          @delete="deleteRecipe"
+          @toggle-json="toggleEditMode"
+          @open-settings="settingsOpen = true"
         />
         <RecipeJsonEditor
           v-if="isEditJSON"
@@ -48,16 +67,27 @@
             a significant amount of prop management. When we move to Vue 3 and have access to some of the newer API's the plan to update this
             data management and mutation system we're using.
           -->
-          <div>
-            <RecipePageInfoEditor v-if="isEditMode" v-model="recipe" />
+          <RecipePageEditorHero
+            v-if="isEditForm"
+            v-model="recipe"
+            class="editor-section mb-6"
+            style="--editor-stagger: 0"
+            @image-updated="syncImageSnapshot"
+          />
+          <div
+            v-if="isEditMode"
+            class="editor-section"
+            style="--editor-stagger: 1"
+          >
+            <RecipePageInfoEditor v-model="recipe" />
           </div>
-          <div>
-            <RecipePageEditorToolbar v-if="isEditForm" v-model="recipe" />
-          </div>
-          <div>
-            <RecipePageIngredientEditor v-if="isEditForm" v-model="recipe" />
-          </div>
-          <div>
+          <RecipeEditorIngredients
+            v-if="isEditForm"
+            v-model="recipe"
+            class="editor-section mt-6"
+            style="--editor-stagger: 2"
+          />
+          <div v-if="!isEditMode">
             <RecipePageScale v-model="scale" :recipe="recipe" />
           </div>
 
@@ -84,17 +114,20 @@
             -->
             <v-col cols="12" sm="12" :md="8 + (isCookMode ? 1 : 0) * 4">
               <RecipePageInstructions
+                v-if="!isEditForm"
                 v-model="recipe.recipeInstructions"
                 v-model:assets="recipe.assets"
                 :recipe="recipe"
                 :scale="scale"
               />
-              <div v-if="isEditForm" class="d-flex">
-                <RecipeDialogBulkAdd class="ml-auto my-2 mr-1" @bulk-data="addStep" />
-                <BaseButton class="my-2" @click="addStep()">
-                  {{ $t("general.add") }}
-                </BaseButton>
-              </div>
+              <RecipeEditorSteps
+                v-else
+                v-model="recipe.recipeInstructions"
+                v-model:assets="recipe.assets"
+                :recipe="recipe"
+                class="editor-section"
+                style="--editor-stagger: 3"
+              />
               <div v-if="!$vuetify.display.mdAndUp">
                 <RecipePageOrganizers v-model="recipe" />
               </div>
@@ -191,13 +224,15 @@
 </template>
 
 <script setup lang="ts">
-import { invoke, until } from "@vueuse/core";
+import { invoke, until, watchDebounced } from "@vueuse/core";
 import type { RouteLocationNormalized } from "vue-router";
 import RecipeIngredients from "../RecipeIngredients.vue";
-import RecipePageEditorToolbar from "./RecipePageParts/RecipePageEditorToolbar.vue";
+import RecipePageEditorBar from "./RecipePageParts/RecipePageEditorBar.vue";
+import RecipePageEditorHero from "./RecipePageParts/RecipePageEditorHero.vue";
+import RecipePageEditorSettings from "./RecipePageParts/RecipePageEditorSettings.vue";
 import RecipePageFooter from "./RecipePageParts/RecipePageFooter.vue";
 import RecipePageHeader from "./RecipePageParts/RecipePageHeader.vue";
-import RecipePageIngredientEditor from "./RecipePageParts/RecipePageIngredientEditor.vue";
+import RecipeEditorIngredients from "./RecipePageParts/RecipeEditorIngredients.vue";
 import RecipePageIngredientToolsView from "./RecipePageParts/RecipePageIngredientToolsView.vue";
 import RecipePageInstructions from "./RecipePageParts/RecipePageInstructions.vue";
 import RecipePageOrganizers from "./RecipePageParts/RecipePageOrganizers.vue";
@@ -215,8 +250,8 @@ import type { NoUndefinedField } from "~/lib/api/types/non-generated";
 import type { Recipe, RecipeCategory, RecipeIngredient, RecipeTag, RecipeTool } from "~/lib/api/types/recipe";
 import { useRouteQuery } from "~/composables/use-router";
 import { useUserApi } from "~/composables/api";
-import { uuid4, deepCopy } from "~/composables/use-utils";
-import RecipeDialogBulkAdd from "~/components/Domain/Recipe/RecipeDialogBulkAdd.vue";
+import { deepCopy } from "~/composables/use-utils";
+import RecipeEditorSteps from "./RecipePageParts/RecipeEditorSteps.vue";
 import RecipeNotes from "~/components/Domain/Recipe/RecipeNotes.vue";
 import { useLoggedInState } from "~/composables/use-logged-in-state";
 import { useNavigationWarning } from "~/composables/use-navigation-warning";
@@ -232,7 +267,7 @@ const groupSlug = computed(() => (route.params.groupSlug as string) || auth.user
 
 const router = useRouter();
 const api = useUserApi();
-const { setMode, isEditForm, isEditJSON, isCookMode, isEditMode, isParsing, toggleCookMode, toggleIsParsing }
+const { setMode, isEditForm, isEditJSON, isCookMode, isEditMode, isParsing, toggleCookMode, toggleIsParsing, toggleEditMode, saveState, isDirty }
   = usePageState(recipe.value.slug);
 const { deactivateNavigationWarning } = useNavigationWarning();
 const notLinkedIngredients = computed(() => {
@@ -251,6 +286,12 @@ const notLinkedIngredients = computed(() => {
 const originalRecipe = ref<Recipe | null>(null);
 const discardDialog = ref(false);
 const pendingRoute = ref<RouteLocationNormalized | null>(null);
+const settingsOpen = ref(false);
+
+useSaveShortcut(
+  () => saveRecipe(),
+  () => isEditMode.value && !discardDialog.value && !isParsing.value && !settingsOpen.value,
+);
 
 invoke(async () => {
   await until(recipe.value).not.toBeNull();
@@ -262,6 +303,25 @@ function hasUnsavedChanges(): boolean {
     return false;
   }
   return JSON.stringify(recipe.value) !== JSON.stringify(originalRecipe.value);
+}
+
+// Debounced mirror of hasUnsavedChanges for UI (the dirty dot); guards keep
+// using the synchronous compare so a fast edit→cancel is never missed.
+watchDebounced(
+  recipe,
+  () => {
+    isDirty.value = hasUnsavedChanges();
+  },
+  { debounce: 400, deep: true },
+);
+
+// Keep the dirty indicator honest for image operations, which persist
+// immediately via their own endpoints rather than through saveRecipe.
+function syncImageSnapshot() {
+  if (originalRecipe.value) {
+    originalRecipe.value.image = recipe.value.image;
+    isDirty.value = hasUnsavedChanges();
+  }
 }
 
 function restoreOriginalRecipe() {
@@ -361,20 +421,37 @@ watch(isParsing, () => {
  */
 
 async function saveRecipe() {
+  if (saveState.value !== "idle") {
+    return;
+  }
+  saveState.value = "saving";
+
   const { data, error } = await api.recipes.updateOne(recipe.value.slug, recipe.value);
-  if (!error) {
+
+  if (error) {
+    saveState.value = "error";
+    setTimeout(() => (saveState.value = "idle"), 600);
+    return;
+  }
+
+  if (data?.slug) {
+    recipe.value = data as NoUndefinedField<Recipe>;
+    originalRecipe.value = deepCopy(recipe.value);
+  }
+  isDirty.value = false;
+  saveState.value = "success";
+
+  // Let the "Saved" beat land before flipping back to view mode.
+  setTimeout(() => {
     if (data?.slug && data.slug !== route.params.slug) {
       isNavigatingAfterRename.value = true;
     }
     setMode(PageMode.VIEW);
-  }
-  if (data?.slug) {
-    recipe.value = data as NoUndefinedField<Recipe>;
-    originalRecipe.value = deepCopy(recipe.value);
-    if (data.slug !== route.params.slug) {
+    if (data?.slug && data.slug !== route.params.slug) {
       router.replace(`/g/${groupSlug.value}/r/` + data.slug);
     }
-  }
+    saveState.value = "idle";
+  }, 900);
 }
 
 async function saveParsedIngredients(ingredients: NoUndefinedField<RecipeIngredient[]>) {
@@ -406,34 +483,6 @@ const landscape = computed(() => {
 
   return false;
 });
-
-/** =============================================================
- * Bulk Step Editor
- * TODO: Move to RecipePageInstructions component
- */
-
-function addStep(steps: Array<string> | null = null) {
-  if (!recipe.value.recipeInstructions) {
-    return;
-  }
-
-  if (steps) {
-    const cleanedSteps = steps.map((step) => {
-      return { id: uuid4(), text: step, title: "", summary: "", ingredientReferences: [] };
-    });
-
-    recipe.value.recipeInstructions.push(...cleanedSteps);
-  }
-  else {
-    recipe.value.recipeInstructions.push({
-      id: uuid4(),
-      text: "",
-      title: "",
-      summary: "",
-      ingredientReferences: [],
-    });
-  }
-}
 
 /** =============================================================
  * RecipeChip Clicked

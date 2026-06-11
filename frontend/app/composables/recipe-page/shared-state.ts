@@ -12,6 +12,8 @@ export enum EditorMode {
   FORM = "FORM",
 }
 
+export type SaveState = "idle" | "saving" | "success" | "error";
+
 /**
  * PageState encapsulates the state of the recipe page the can be shared across components.
  * It allows and facilitates the complex state management of the recipe page where many components
@@ -24,6 +26,8 @@ export enum EditorMode {
 interface PageState {
   slug: Ref<string>;
   imageKey: Ref<number>;
+  saveState: Ref<SaveState>;
+  isDirty: Ref<boolean>;
 
   pageMode: ComputedRef<PageMode>;
   editMode: ComputedRef<EditorMode>;
@@ -67,10 +71,12 @@ function pageRefs(slug: string) {
     editModeRef: ref(EditorMode.FORM),
     isParsingRef: ref(false),
     imageKey: ref(1),
+    saveState: ref<SaveState>("idle"),
+    isDirty: ref(false),
   };
 }
 
-function pageState({ slugRef, pageModeRef, editModeRef, isParsingRef, imageKey }: PageRefs): PageState {
+function pageState({ slugRef, pageModeRef, editModeRef, isParsingRef, imageKey, saveState, isDirty }: PageRefs): PageState {
   const { activateNavigationWarning, deactivateNavigationWarning } = useNavigationWarning();
 
   const toggleEditMode = () => {
@@ -122,6 +128,8 @@ function pageState({ slugRef, pageModeRef, editModeRef, isParsingRef, imageKey }
     pageMode: computed(() => pageModeRef.value),
     editMode: computed(() => editModeRef.value),
     imageKey,
+    saveState,
+    isDirty,
 
     toggleEditMode,
     setMode,

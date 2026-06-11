@@ -79,6 +79,7 @@
       v-if="isEditForm"
       v-model="recipe.nutrition"
       :recipe="recipe"
+      @enable-nutrition="recipe.settings.showNutrition = true"
     />
     <RecipeAssets
       v-if="recipe.settings.showAssets"

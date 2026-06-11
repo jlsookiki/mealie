@@ -452,8 +452,8 @@ function segmentRecipeText(raw: string): SegmentedRecipe {
     buckets[current].push(l);
   }
 
-  let ingredients = buckets.ingredients.map(stripIngredientBullet).filter(Boolean);
-  let instructions = buckets.instructions.map(stripStepBullet).filter(Boolean);
+  const ingredients = buckets.ingredients.map(stripIngredientBullet).filter(Boolean);
+  const instructions = buckets.instructions.map(stripStepBullet).filter(Boolean);
 
   // No section headers found — classify the leading block line by line.
   if (!ingredients.length && !instructions.length) {

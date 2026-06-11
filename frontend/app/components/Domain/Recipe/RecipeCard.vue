@@ -139,7 +139,9 @@ const cursor = computed(() => showRecipeContent.value ? "pointer" : "auto");
 <style scoped>
 .recipe-card {
   overflow: hidden;
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  transition:
+    transform 0.2s ease,
+    box-shadow 0.2s ease;
 }
 .recipe-card.on-hover {
   transform: translateY(-3px);

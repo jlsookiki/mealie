@@ -1,17 +1,14 @@
 <template>
   <div
     ref="el"
-    :class="isOverDropZone ? 'over' : ''"
+    class="drop-zone"
+    :class="{ 'drop-zone--over': isOverDropZone }"
   >
     <div
       v-if="isOverDropZone"
-      class="overlay"
-    />
-    <div
-      v-if="isOverDropZone"
-      class="absolute text-container"
+      class="drop-zone__overlay"
     >
-      <p class="text-center drop-text">
+      <p class="drop-zone__label">
         {{ $t("recipe.drop-image") }}
       </p>
     </div>
@@ -43,34 +40,29 @@ const { isOverDropZone } = useDropZone(el, files => onDrop(files));
 </script>
 
 <style lang="css">
-.over {
-  background-color: #f0f0f0;
-}
-.overlay {
-  position: absolute;
-  filter: blur(2px);
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background-color: rgba(0, 0, 0, 0.309);
+.drop-zone {
+  position: relative;
 }
 
-.text-container {
+.drop-zone__overlay {
+  position: absolute;
+  inset: 0;
   z-index: 10;
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
   display: flex;
-  justify-content: center;
   align-items: center;
+  justify-content: center;
+  border-radius: inherit;
+  background: rgba(var(--v-theme-primary), 0.08);
+  border: 2px dashed rgba(var(--v-theme-primary), 0.8);
 }
 
-.drop-text {
-  color: white;
-  font-size: 1.5rem;
-  font-weight: bold;
+.drop-zone__label {
+  margin: 0;
+  background: rgb(var(--v-theme-surface));
+  box-shadow: var(--ms-shadow-sm);
+  border-radius: 999px;
+  padding: 8px 20px;
+  font-weight: 600;
+  animation: ms-pop var(--ms-dur-base, 0.25s) var(--ms-ease-spring, ease);
 }
 </style>

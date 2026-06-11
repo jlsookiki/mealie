@@ -1,0 +1,132 @@
+/* ============================================================
+ * Recipe editor motion system.
+ * Shared keyframes live here (scoped styles hash @keyframes names,
+ * so cross-component animations can't be component-scoped).
+ * Everything is namespaced under .recipe-editor so nothing leaks.
+ * ============================================================ */
+
+:root {
+  --ms-dur-fast: 0.15s;
+  --ms-dur-base: 0.25s;
+  --ms-dur-slow: 0.4s;
+  --ms-ease: ease;
+  --ms-ease-spring: cubic-bezier(0.175, 0.885, 0.32, 1.4);
+}
+
+@keyframes ms-rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes ms-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.4);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes ms-shake {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  20% {
+    transform: translateX(-6px);
+  }
+  40% {
+    transform: translateX(5px);
+  }
+  60% {
+    transform: translateX(-4px);
+  }
+  80% {
+    transform: translateX(2px);
+  }
+}
+
+@keyframes ms-sweep {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(100%);
+  }
+}
+
+/* Staggered section entrance when edit mode mounts */
+.recipe-editor .editor-section {
+  animation: ms-rise var(--ms-dur-base) var(--ms-ease) both;
+  animation-delay: calc(var(--editor-stagger, 0) * 40ms);
+}
+
+/* List row enter/leave/FLIP — used by ingredient + step TransitionGroups.
+ * The absolute-positioned leave lets siblings FLIP-slide up while the
+ * removed row fades out in place (transform/opacity only, no height anim). */
+.recipe-editor .list-row-enter-active {
+  animation: ms-rise var(--ms-dur-base) var(--ms-ease);
+}
+.recipe-editor .list-row-leave-active {
+  position: absolute;
+  width: 100%;
+  transition:
+    opacity 0.18s var(--ms-ease),
+    transform 0.18s var(--ms-ease);
+}
+.recipe-editor .list-row-leave-to {
+  opacity: 0;
+  transform: translateX(-12px);
+}
+.recipe-editor .list-row-move {
+  transition: transform var(--ms-dur-base) var(--ms-ease);
+}
+
+/* Drag affordances */
+.recipe-editor .sortable-chosen {
+  background: rgb(var(--v-theme-surface));
+  box-shadow: var(--ms-shadow-md);
+  border-radius: var(--ms-radius-lg);
+  cursor: grabbing;
+  will-change: transform;
+}
+.recipe-editor .ghost {
+  opacity: 0.35;
+  outline: 2px dashed rgba(var(--v-theme-primary), 0.5);
+  outline-offset: -2px;
+  border-radius: var(--ms-radius-lg);
+}
+.recipe-editor .handle {
+  opacity: 0.35;
+  transition: opacity var(--ms-dur-fast) var(--ms-ease);
+}
+.recipe-editor .editor-row:hover .handle,
+.recipe-editor .editor-row:focus-within .handle {
+  opacity: 1;
+}
+
+/* Clearance for the fixed bottom editor bar on small screens */
+@media (max-width: 1279px) {
+  .recipe-editor {
+    padding-bottom: calc(96px + env(safe-area-inset-bottom));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .recipe-editor *,
+  .recipe-editor *::before,
+  .recipe-editor *::after,
+  .editor-section {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
