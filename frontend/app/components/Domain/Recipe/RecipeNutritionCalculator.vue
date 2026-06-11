@@ -87,7 +87,6 @@ const nutrition = defineModel<Nutrition>({ required: true });
 
 const api = useUserApi();
 const { ingredientToParserString } = useIngredientTextParser();
-const { estimate } = useNutritionEstimate();
 
 const loading = ref(false);
 const result = ref<AnalyzeResult | null>(null);
@@ -105,7 +104,10 @@ async function calculate() {
     const ingredients = (parsed ?? []).map(p => p.ingredient);
     const servings = props.recipe.recipeServings || props.recipe.recipeYieldQuantity || 1;
 
-    const res = await estimate(ingredients, servings);
+    const { data: res } = await api.recipes.estimateNutrition(ingredients, servings);
+    if (!res) {
+      throw new Error("No response from nutrition endpoint");
+    }
 
     result.value = res;
     nutrition.value = { ...nutrition.value, ...res.nutrition };

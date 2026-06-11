@@ -16,12 +16,6 @@ RUN yarn install \
     # https://github.com/docker/build-push-action/issues/471
     --network-timeout 1000000
 
-# USDA FoodData Central key, baked into the static bundle for client-side
-# nutrition lookups (no server runtime in the SPA). Defaults to the rate-limited
-# public DEMO_KEY when unset.
-ARG USDA_API_KEY=DEMO_KEY
-ENV USDA_API_KEY=$USDA_API_KEY
-
 RUN yarn generate
 
 ###############################################

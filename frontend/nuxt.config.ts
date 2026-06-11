@@ -79,8 +79,6 @@ export default defineNuxtConfig({
     apiUrl: process.env.API_URL || "http://localhost:9000",
     public: {
       AUTH_TOKEN,
-      // Baked into the static bundle at build time (no server runtime in prod).
-      usdaApiKey: process.env.USDA_API_KEY || "DEMO_KEY",
       GLOBAL_MIDDLEWARE: process.env.GLOBAL_MIDDLEWARE || undefined,
       SUB_PATH: process.env.SUB_PATH || "",
       // ==============================================

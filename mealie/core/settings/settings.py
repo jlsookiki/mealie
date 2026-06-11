@@ -415,6 +415,12 @@ class AppSettings(AppLoggingSettings):
         return self.OIDC_FEATURE.enabled
 
     # ===============================================
+    # USDA FoodData Central Configuration
+
+    USDA_API_KEY: str = "DEMO_KEY"
+    """API key for USDA FoodData Central nutrition lookups. Defaults to the rate-limited public DEMO_KEY."""
+
+    # ===============================================
     # OpenAI Configuration
 
     OPENAI_CUSTOM_PROMPT_DIR: str | None = None

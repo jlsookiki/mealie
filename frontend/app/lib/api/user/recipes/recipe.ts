@@ -240,6 +240,26 @@ export class RecipeAPI extends BaseCRUDAPI<CreateRecipe, Recipe, Recipe> {
     return await this.requests.post<ParsedIngredient>(routes.recipesParseIngredient, { parser, ingredient });
   }
 
+  async estimateNutrition(ingredients: ParsedIngredient["ingredient"][], servings: number) {
+    return await this.requests.post<{
+      nutrition: {
+        calories: string;
+        proteinContent: string;
+        fatContent: string;
+        carbohydrateContent: string;
+        fiberContent: string;
+        sugarContent: string;
+        sodiumContent: string;
+        cholesterolContent: string;
+        saturatedFatContent: string;
+      };
+      breakdown: { input: string; grams: number | null; source: "usda" | "off" | null; kcal: number | null }[];
+      servings: number;
+      matched: number;
+      total: number;
+    }>(`${prefix}/fork/nutrition`, { ingredients, servings });
+  }
+
   async updateMany(payload: Recipe[]) {
     return await this.requests.put<Recipe[]>(routes.recipesBase, payload);
   }

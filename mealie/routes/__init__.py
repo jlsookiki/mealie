@@ -6,6 +6,7 @@ from . import (
     auth,
     comments,
     explore,
+    fork,
     groups,
     households,
     organizers,
@@ -21,6 +22,7 @@ router = APIRouter(prefix="/api")
 
 router.include_router(app.router)
 router.include_router(auth.router)
+router.include_router(fork.router)
 router.include_router(users.router)
 router.include_router(households.router)
 router.include_router(groups.router)
