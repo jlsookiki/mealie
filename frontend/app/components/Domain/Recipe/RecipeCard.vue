@@ -1,6 +1,6 @@
 <template>
   <!-- Wrap v-hover with a div to provide a proper DOM element for the transition -->
-  <div>
+  <div class="recipe-card__wrap">
     <v-hover
       v-slot="{ isHovering, props: hoverProps }"
       :open-delay="50"
@@ -28,17 +28,18 @@
           {{ name }}
         </v-card-title>
 
-        <div
-          v-if="description"
-          class="recipe-card__desc px-4 pt-1"
-        >
-          <SafeMarkdown :source="description" />
+        <!-- Always rendered (even when empty) so every card is the same height -->
+        <div class="recipe-card__desc px-4 pt-1">
+          <SafeMarkdown
+            v-if="description"
+            :source="description"
+          />
         </div>
 
         <slot name="actions">
           <v-card-actions
             v-if="showRecipeContent"
-            class="px-2 pb-1"
+            class="recipe-card__actions px-2 pb-1"
           >
             <RecipeFavoriteBadge
               v-if="isOwnGroup"
@@ -53,15 +54,17 @@
               :recipe-id="recipeId"
             />
             <v-spacer />
-            <RecipeChips
-              :truncate="true"
-              :items="tags"
-              :title="false"
-              :limit="2"
-              small
-              url-prefix="tags"
-              v-bind="$attrs"
-            />
+            <div class="recipe-card__chips">
+              <RecipeChips
+                :truncate="true"
+                :items="tags"
+                :title="false"
+                :limit="2"
+                small
+                url-prefix="tags"
+                v-bind="$attrs"
+              />
+            </div>
 
             <!-- If we're not logged-in, no items display, so we hide this menu -->
             <RecipeContextMenu
@@ -137,8 +140,14 @@ const cursor = computed(() => showRecipeContent.value ? "pointer" : "auto");
 </script>
 
 <style scoped>
+.recipe-card__wrap {
+  height: 100%;
+}
 .recipe-card {
   overflow: hidden;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
   transition:
     transform 0.2s ease,
     box-shadow 0.2s ease;
@@ -166,6 +175,8 @@ const cursor = computed(() => showRecipeContent.value ? "pointer" : "auto");
   -webkit-line-clamp: 2;
   line-clamp: 2;
   overflow: hidden;
+  /* Exactly two lines tall whether the name uses one or two (12px = pt-3) */
+  height: calc(2 * 1.25em + 12px);
 }
 .recipe-card__desc {
   font-size: 0.85rem;
@@ -176,5 +187,27 @@ const cursor = computed(() => showRecipeContent.value ? "pointer" : "auto");
   -webkit-line-clamp: 2;
   line-clamp: 2;
   overflow: hidden;
+  /* Fixed two-line block even when there is no description */
+  height: calc(2 * 1.4em + 4px);
+}
+.recipe-card__actions {
+  /* Pin to the card bottom at a fixed height; never let chips wrap */
+  margin-top: auto;
+  flex-wrap: nowrap;
+  overflow: hidden;
+  min-width: 0;
+  height: 60px;
+}
+.recipe-card__chips {
+  min-width: 0;
+  overflow: hidden;
+}
+.recipe-card__chips > :deep(div) {
+  display: flex;
+  flex-wrap: nowrap;
+  white-space: nowrap;
+}
+.recipe-card__chips :deep(.v-chip) {
+  flex-shrink: 0;
 }
 </style>
