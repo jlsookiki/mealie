@@ -420,6 +420,16 @@ def _tokens(s: str) -> set[str]:
 
 _USDA_TYPE_BONUS = {"Foundation": 0.30, "SR Legacy": 0.20, "Branded": 0.10}
 
+# Preparation/state/size words: real signal for choosing BETWEEN variants of a
+# food, but worthless for identifying WHICH food. "Basil, Fresh" must never
+# match "fresh ginger" on the strength of "fresh" alone.
+_DESCRIPTOR_TOKENS = {
+    "fresh", "raw", "cooked", "dried", "ground", "grated", "chopped", "sliced",
+    "minced", "diced", "peeled", "frozen", "canned", "whole", "large", "small",
+    "medium", "ripe", "root", "boneless", "skinless", "lean", "salted",
+    "unsalted", "sweetened", "unsweetened", "extra", "light",
+}
+
 
 def _score_candidate(c: dict, query_tokens: set[str], branded: bool) -> float:
     """Match confidence: token overlap with the query dominates; source quality breaks ties.
@@ -441,11 +451,26 @@ def _score_candidate(c: dict, query_tokens: set[str], branded: bool) -> float:
     name_tokens = _tokens(clean_name)
     if not query_tokens or not name_tokens:
         return 0.0
-    hits = len(query_tokens & name_tokens)
-    recall = hits / len(query_tokens)
-    precision = hits / len(name_tokens)
-    score = 2 * precision * recall / (precision + recall) if hits else 0.0
-    if _tokens(clean_name.split(",")[0]) == query_tokens:
+
+    # Identity match: F1 over food-identity tokens only. Falls back to all
+    # tokens when either side is pure descriptors (degenerate queries).
+    q_id = query_tokens - _DESCRIPTOR_TOKENS
+    n_id = name_tokens - _DESCRIPTOR_TOKENS
+    if not q_id or not n_id:
+        q_id, n_id = query_tokens, name_tokens
+    hits = len(q_id & n_id)
+    if not hits:
+        return 0.0  # no shared identity word — descriptors alone can't match
+    precision = hits / len(n_id)
+    recall = hits / len(q_id)
+    score = 2 * precision * recall / (precision + recall)
+
+    # Descriptor agreement as a gentle tiebreak (fresh vs dried vs ground).
+    q_desc = query_tokens & _DESCRIPTOR_TOKENS
+    if q_desc:
+        score += 0.08 * len(q_desc & name_tokens) / len(q_desc)
+
+    if (_tokens(clean_name.split(",")[0]) - _DESCRIPTOR_TOKENS or set()) == q_id:
         score += 0.15
     score += max(0.0, 0.10 - 0.025 * (c.get("rank") or 0))
 
@@ -486,6 +511,12 @@ def _select_primary(
         if corroborated:
             s += 0.25
         scored.append((c, s))
+
+    # An honest "no match" beats a confident wrong one: drop candidates that
+    # never cleared the identity bar (0.0 base + at most the consensus bonus).
+    scored = [(c, s) for c, s in scored if s > 0.30]
+    if not scored:
+        return None, "none", [], []
 
     best_per_source: dict[str, tuple[dict, float]] = {}
     for c, s in scored:
