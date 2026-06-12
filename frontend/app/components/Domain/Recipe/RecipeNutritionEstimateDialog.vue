@@ -61,15 +61,23 @@
         </div>
 
         <!-- Step 3: review before saving -->
-        <template v-else-if="phase === 'review' && result">
+        <template v-else-if="phase === 'review' && result && effectiveNutrition">
           <div class="d-flex align-baseline ga-1">
-            <span class="estimate-dialog__calories">{{ rounded(result.nutrition.calories) }}</span>
+            <Transition
+              name="est-swap"
+              mode="out-in"
+            >
+              <span
+                :key="effectiveNutrition.calories"
+                class="estimate-dialog__calories"
+              >{{ rounded(effectiveNutrition.calories) }}</span>
+            </Transition>
             <span class="estimate-dialog__calories-unit">{{ $t("recipe.calories-suffix") }} · per serving (÷{{ result.servings }})</span>
           </div>
           <div class="d-flex ga-3 mt-1 mb-3">
-            <span class="estimate-dialog__macro">{{ rounded(result.nutrition.proteinContent) }}g protein</span>
-            <span class="estimate-dialog__macro">{{ rounded(result.nutrition.carbohydrateContent) }}g carbs</span>
-            <span class="estimate-dialog__macro">{{ rounded(result.nutrition.fatContent) }}g fat</span>
+            <span class="estimate-dialog__macro">{{ rounded(effectiveNutrition.proteinContent) }}g protein</span>
+            <span class="estimate-dialog__macro">{{ rounded(effectiveNutrition.carbohydrateContent) }}g carbs</span>
+            <span class="estimate-dialog__macro">{{ rounded(effectiveNutrition.fatContent) }}g fat</span>
           </div>
 
           <v-alert
@@ -101,7 +109,7 @@
                 <span class="estimate-dialog__row-input">
                   {{ b.input }}
                   <v-icon
-                    v-if="b.agreement === 'divergent'"
+                    v-if="b.agreement === 'divergent' && selectedIdx(i) === 0"
                     :icon="mdiAlert"
                     size="13"
                     color="warning"
@@ -109,33 +117,48 @@
                   />
                 </span>
                 <span
-                  v-if="b.matched && !sameish(b.input, b.matched)"
+                  v-if="rowMatched(b, i) && !sameish(b.input, rowMatched(b, i)!)"
                   class="estimate-dialog__row-matched"
-                >→ {{ b.matched }}</span>
+                >→ {{ rowMatched(b, i) }}</span>
                 <span
                   v-else-if="!b.source"
                   class="estimate-dialog__row-nomatch"
                 >no match</span>
-                <!-- Per-source cross-reference (kcal/100g), so a bad match stands out -->
-                <span
-                  v-if="b.sources && b.sources.length > 1"
-                  class="estimate-dialog__row-sources"
+                <!-- Ranked alternatives — tap to swap which match feeds the totals -->
+                <div
+                  v-if="(b.alternatives?.length ?? 0) > 1"
+                  class="estimate-dialog__alts"
                 >
-                  <span
-                    v-for="s in b.sources"
-                    :key="s.source"
-                    class="estimate-dialog__chip"
-                    :class="{ 'estimate-dialog__chip--primary': s.source === b.source }"
-                  >{{ sourceLabel(s.source) }} {{ s.kcalPer100 }}</span>
-                </span>
+                  <button
+                    v-for="(alt, ai) in b.alternatives"
+                    :key="ai"
+                    type="button"
+                    class="estimate-dialog__alt"
+                    :class="{ 'estimate-dialog__alt--active': selectedIdx(i) === ai }"
+                    :aria-pressed="selectedIdx(i) === ai"
+                    @click="select(i, ai)"
+                  >
+                    <span class="estimate-dialog__alt-src">{{ sourceLabel(alt.source) }}</span>
+                    <span class="estimate-dialog__alt-name">{{ alt.name }}</span>
+                    <span class="estimate-dialog__alt-kcal">{{ alt.kcal }} kcal</span>
+                  </button>
+                </div>
               </div>
-              <span class="estimate-dialog__row-kcal">{{ b.kcal != null ? `${b.kcal} kcal` : "—" }}</span>
+              <Transition
+                name="est-swap"
+                mode="out-in"
+              >
+                <span
+                  :key="rowKcal(b, i) ?? 'none'"
+                  class="estimate-dialog__row-kcal"
+                >{{ rowKcal(b, i) != null ? `${rowKcal(b, i)} kcal` : "—" }}</span>
+              </Transition>
             </div>
           </div>
           <p class="estimate-dialog__caption mt-2 mb-0">
-            Cross-referenced across USDA, Open Food Facts{{ hasNutritionix ? ", and Nutritionix" : "" }} (kcal per 100g
-            shown per source; the one used is highlighted). A wrong match can be fixed by renaming the ingredient and
-            re-estimating.
+            Cross-referenced across USDA and Open Food Facts{{ hasNutritionix ? " and Nutritionix" : "" }}. Wrong match?
+            Tap an alternative to swap it — the totals update instantly. Still off? Rename the ingredient and
+            re-estimate.
           </p>
         </template>
 
@@ -192,6 +215,7 @@ import { useIngredientTextParser } from "~/composables/recipes";
 import { alert } from "~/composables/use-toast";
 
 type EstimateResult = Awaited<ReturnType<ReturnType<typeof useUserApi>["recipes"]["estimateNutrition"]>>["data"];
+type BreakdownRow = NonNullable<EstimateResult>["breakdown"][number];
 
 const open = defineModel<boolean>({ default: false });
 const recipe = defineModel<NoUndefinedField<Recipe>>("recipe", { required: true });
@@ -204,12 +228,14 @@ const servings = ref(4);
 const result = ref<EstimateResult>(null);
 const errorMessage = ref("");
 const saving = ref(false);
+const selections = ref<Record<number, number>>({});
 
 watch(open, (v) => {
   if (v) {
     phase.value = "form";
     result.value = null;
     errorMessage.value = "";
+    selections.value = {};
     servings.value = recipe.value.recipeServings || recipe.value.recipeYieldQuantity || 4;
   }
 });
@@ -236,6 +262,73 @@ const hasNutritionix = computed(() =>
   (result.value?.breakdown ?? []).some(b => (b.sources ?? []).some(s => s.source === "nutritionix")),
 );
 
+// --- alternative swapping ---------------------------------------------------
+
+function selectedIdx(i: number): number {
+  return selections.value[i] ?? 0;
+}
+
+function select(i: number, ai: number) {
+  selections.value = { ...selections.value, [i]: ai };
+}
+
+function rowAlt(b: BreakdownRow, i: number) {
+  return b.alternatives?.[selectedIdx(i)] ?? null;
+}
+
+function rowKcal(b: BreakdownRow, i: number): number | null {
+  const alt = rowAlt(b, i);
+  return alt ? alt.kcal : b.kcal;
+}
+
+function rowMatched(b: BreakdownRow, i: number): string | null {
+  const alt = rowAlt(b, i);
+  return alt?.name ?? b.matched;
+}
+
+// nutrition field → per100 key, mirroring the backend's totals math
+const NUTRIENT_FIELDS = [
+  ["calories", "kcal"],
+  ["proteinContent", "protein"],
+  ["fatContent", "fat"],
+  ["carbohydrateContent", "carb"],
+  ["fiberContent", "fiber"],
+  ["sugarContent", "sugar"],
+  ["sodiumContent", "sodium_mg"],
+  ["cholesterolContent", "chol_mg"],
+  ["saturatedFatContent", "sat_fat"],
+] as const;
+
+const effectiveNutrition = computed(() => {
+  if (!result.value) {
+    return null;
+  }
+  // No swaps → backend totals verbatim (avoids any rounding drift)
+  if (!Object.values(selections.value).some(v => v > 0)) {
+    return result.value.nutrition;
+  }
+  const totals: Record<string, number> = {};
+  for (const [, key] of NUTRIENT_FIELDS) {
+    totals[key] = 0;
+  }
+  result.value.breakdown.forEach((b, i) => {
+    const alt = rowAlt(b, i);
+    if (!alt || b.grams == null) {
+      return;
+    }
+    const f = b.grams / 100;
+    for (const [, key] of NUTRIENT_FIELDS) {
+      totals[key]! += (alt.per100[key] ?? 0) * f;
+    }
+  });
+  const s = result.value.servings || 1;
+  const out: Record<string, string> = {};
+  for (const [field, key] of NUTRIENT_FIELDS) {
+    out[field] = String(Math.round((totals[key]! / s) * 10) / 10);
+  }
+  return out as NonNullable<EstimateResult>["nutrition"];
+});
+
 async function runEstimate() {
   errorMessage.value = "";
   phase.value = "loading";
@@ -249,6 +342,7 @@ async function runEstimate() {
       throw new Error("No response");
     }
     result.value = data;
+    selections.value = {};
     phase.value = "review";
   }
   catch (e) {
@@ -259,12 +353,12 @@ async function runEstimate() {
 }
 
 async function save() {
-  if (!result.value) {
+  if (!result.value || !effectiveNutrition.value) {
     return;
   }
   saving.value = true;
   try {
-    const nutrition: Nutrition = { ...recipe.value.nutrition, ...result.value.nutrition };
+    const nutrition: Nutrition = { ...recipe.value.nutrition, ...effectiveNutrition.value };
     const settings = { ...recipe.value.settings, showNutrition: true };
     const payload: Partial<Recipe> = { nutrition, settings };
     if (servings.value && servings.value > 0 && servings.value !== recipe.value.recipeServings) {
@@ -359,27 +453,85 @@ async function save() {
   font-weight: 600;
 }
 
-.estimate-dialog__row-sources {
+.estimate-dialog__alts {
   display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  margin-top: 3px;
+  flex-direction: column;
+  gap: 3px;
+  margin-top: 4px;
 }
 
-.estimate-dialog__chip {
-  font-size: 0.66rem;
+.estimate-dialog__alt {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  width: 100%;
+  text-align: left;
+  font-size: 0.74rem;
+  padding: 3px 8px;
+  border: 1px solid rgba(var(--v-border-color), 0.12);
+  border-radius: 8px;
+  background: transparent;
+  cursor: pointer;
+  transition:
+    border-color var(--ms-dur-fast, 0.15s) ease,
+    background var(--ms-dur-fast, 0.15s) ease;
+}
+
+.estimate-dialog__alt:hover {
+  border-color: rgba(var(--v-theme-primary), 0.4);
+  background: rgba(var(--v-theme-primary), 0.04);
+}
+
+.estimate-dialog__alt--active {
+  border-color: rgb(var(--v-theme-primary));
+  background: rgba(var(--v-theme-primary), 0.08);
+}
+
+.estimate-dialog__alt-src {
+  flex: 0 0 auto;
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: rgb(var(--v-theme-primary));
+}
+
+.estimate-dialog__alt-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.estimate-dialog__alt-kcal {
+  flex: 0 0 auto;
   font-variant-numeric: tabular-nums;
-  padding: 1px 6px;
-  border-radius: 6px;
-  background: rgba(var(--v-border-color), 0.08);
   opacity: 0.7;
 }
 
-.estimate-dialog__chip--primary {
-  background: rgba(var(--v-theme-primary), 0.14);
-  color: rgb(var(--v-theme-primary));
-  font-weight: 600;
-  opacity: 1;
+.est-swap-enter-active,
+.est-swap-leave-active {
+  transition:
+    opacity 0.15s ease,
+    transform 0.15s ease;
+}
+
+.est-swap-enter-from {
+  opacity: 0;
+  transform: translateY(4px);
+}
+
+.est-swap-leave-to {
+  opacity: 0;
+  transform: translateY(-4px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .est-swap-enter-active,
+  .est-swap-leave-active,
+  .estimate-dialog__alt {
+    transition: none;
+  }
 }
 
 .estimate-dialog__row-kcal {

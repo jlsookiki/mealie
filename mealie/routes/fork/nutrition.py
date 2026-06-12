@@ -102,6 +102,14 @@ class SourceValue(BaseModel):
     kcalPer100: int | None = None
 
 
+class AlternativeOut(BaseModel):
+    """A ranked candidate the user can swap to; per100 lets the client recompute totals."""
+    source: str
+    name: str | None = None
+    kcal: int | None = None  # kcal for this row's grams, ready to display
+    per100: dict[str, float]  # kcal/protein/fat/carb/fiber/sugar/sodium_mg/chol_mg/sat_fat
+
+
 class IngredientBreakdown(BaseModel):
     input: str
     grams: int | None
@@ -110,6 +118,7 @@ class IngredientBreakdown(BaseModel):
     matched: str | None = None  # name of the matched food, for transparency
     sources: list[SourceValue] = []  # every source that returned a value
     agreement: str | None = None  # "single" | "agree" | "divergent" | None
+    alternatives: list[AlternativeOut] = []  # top-ranked candidates, primary first
 
 
 class NutritionOut(BaseModel):
@@ -451,8 +460,10 @@ def _score_candidate(c: dict, query_tokens: set[str], branded: bool) -> float:
     return score
 
 
-def _select_primary(candidates: list[dict], branded: bool, query: str) -> tuple[dict | None, str, list[dict]]:
-    """Score all candidates → (primary, agreement, best-per-source).
+def _select_primary(
+    candidates: list[dict], branded: bool, query: str
+) -> tuple[dict | None, str, list[dict], list[dict]]:
+    """Score all candidates → (primary, agreement, best-per-source, ranked).
 
     The consensus bonus requires true cross-referencing: a candidate only earns it
     when a candidate from a DIFFERENT source lands within 25% kcal — same-source
@@ -460,7 +471,7 @@ def _select_primary(candidates: list[dict], branded: bool, query: str) -> tuple[
     kcal distribution is bimodal (canned ~130 vs dry ~380 chickpeas). Agreement is
     judged across each source's best candidate: "single" | "agree" | "divergent"."""
     if not candidates:
-        return None, "none", []
+        return None, "none", [], []
 
     query_tokens = _tokens(_clean_query(query) or query)
     scored = []
@@ -480,7 +491,8 @@ def _select_primary(candidates: list[dict], branded: bool, query: str) -> tuple[
         if cur is None or s > cur[1]:
             best_per_source[c["source"]] = (c, s)
 
-    primary = max(scored, key=lambda cs: cs[1])[0]
+    ranked = [c for c, _ in sorted(scored, key=lambda cs: cs[1], reverse=True)]
+    primary = ranked[0]
 
     source_bests = [c for c, _ in best_per_source.values()]
     if len(source_bests) == 1:
@@ -490,7 +502,10 @@ def _select_primary(candidates: list[dict], branded: bool, query: str) -> tuple[
         mid = kcals[len(kcals) // 2]
         agreement = "agree" if (kcals[-1] - kcals[0]) / max(mid, 1) <= 0.25 else "divergent"
 
-    return primary, agreement, source_bests
+    return primary, agreement, source_bests, ranked
+
+
+_NUTRIENT_KEYS = ["kcal", "protein", "fat", "carb", "fiber", "sugar", "sodium_mg", "chol_mg", "sat_fat"]
 
 
 def _round1(n: float) -> str:
@@ -547,12 +562,29 @@ class ForkNutritionController(BaseUserController):
 
             grams = _to_grams(ing.quantity, unit_name, food_name or ing.note or "")
             candidates, branded = await _lookup_candidates(client, query, api_key, nx_id, nx_key)
-            primary, agreement, source_bests = _select_primary(candidates, branded, query)
+            primary, agreement, source_bests, ranked = _select_primary(candidates, branded, query)
 
             sources_out = [
                 SourceValue(source=c["source"], name=c.get("name") or None, kcalPer100=int(round(c["kcal"])))
                 for c in sorted(source_bests, key=lambda c: c["kcal"])
             ]
+
+            f = grams / 100.0
+            alternatives: list[AlternativeOut] = []
+            seen_alts: set[tuple[str, str]] = set()
+            for c in ranked:
+                alt_key = (c["source"], (c.get("name") or "").lower())
+                if alt_key in seen_alts:
+                    continue
+                seen_alts.add(alt_key)
+                alternatives.append(AlternativeOut(
+                    source=c["source"],
+                    name=c.get("name") or None,
+                    kcal=int(round(c["kcal"] * f)),
+                    per100={k: round(float(c.get(k, 0)), 3) for k in _NUTRIENT_KEYS},
+                ))
+                if len(alternatives) == 3:
+                    break
 
             if primary is None:
                 async with lock:
@@ -565,7 +597,6 @@ class ForkNutritionController(BaseUserController):
                     ))
                 return
 
-            f = grams / 100.0
             async with lock:
                 for k in totals:
                     totals[k] += primary.get(k, 0) * f
@@ -577,6 +608,7 @@ class ForkNutritionController(BaseUserController):
                     matched=primary.get("name") or None,
                     sources=sources_out,
                     agreement=agreement,
+                    alternatives=alternatives,
                 ))
 
         async with httpx.AsyncClient() as client:
