@@ -29,8 +29,8 @@ from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, UUID4
+from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic import BaseModel
 from sqlalchemy.orm.session import Session
 
 from mealie.core.config import get_app_dirs
@@ -113,7 +113,7 @@ class AuthorizeRequest(BaseModel):
 
 
 class TokenRequest(BaseModel):
-    grant_type: str
+    grant_type: str | None = None
     client_id: str | None = None
     client_secret: str | None = None
     code: str | None = None
@@ -122,8 +122,21 @@ class TokenRequest(BaseModel):
     refresh_token: str | None = None
 
 
-class RevokeRequest(BaseModel):
-    token: str | None = None
+async def _request_params(request: Request) -> dict:
+    """OAuth token/revoke requests arrive form-encoded per RFC 6749 (what
+    claude.ai sends); JSON is accepted too for convenience. Unknown fields
+    (scope, resource, ...) are carried through and ignored by the models."""
+    ctype = request.headers.get("content-type", "")
+    if "application/json" in ctype:
+        try:
+            return await request.json()
+        except Exception:
+            return {}
+    try:
+        form = await request.form()
+        return {k: str(v) for k, v in form.items()}
+    except Exception:
+        return {}
 
 
 # ---------------------------------------------------------------------------
@@ -195,6 +208,7 @@ def _issue_tokens(session: Session, user_id: str, client: dict) -> dict:
         "token_type": "Bearer",
         "expires_in": ACCESS_TOKEN_DAYS * 24 * 60 * 60,
         "refresh_token": refresh,
+        "scope": "mealie",
     }
 
 
@@ -207,7 +221,9 @@ def _delete_api_token(session: Session, token_db_id: Any) -> None:
 
 
 @public_router.post("/token")
-def token_grant(body: TokenRequest, session: Session = Depends(generate_session)) -> dict:
+async def token_grant(request: Request, session: Session = Depends(generate_session)) -> dict:
+    params = await _request_params(request)
+    body = TokenRequest(**{k: params.get(k) for k in TokenRequest.model_fields})
     _store.prune()
     client = _store.data["clients"].get(body.client_id or "")
     if not client:
@@ -242,9 +258,11 @@ def token_grant(body: TokenRequest, session: Session = Depends(generate_session)
 
 
 @public_router.post("/revoke")
-def revoke(body: RevokeRequest, session: Session = Depends(generate_session)) -> dict:
-    if body.token:
-        rec = _store.data["refresh"].pop(_hash(body.token), None)
+async def revoke(request: Request, session: Session = Depends(generate_session)) -> dict:
+    params = await _request_params(request)
+    token = str(params.get("token") or "")
+    if token:
+        rec = _store.data["refresh"].pop(_hash(token), None)
         if rec:
             _delete_api_token(session, rec["token_db_id"])
             _store.save()
