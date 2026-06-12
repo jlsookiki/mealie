@@ -219,7 +219,9 @@ def _parse_usda_foods(data: dict) -> list[dict]:
         # Foundation foods report energy as Atwater factors (#957/#958), not #208 —
         # requiring #208 silently rejected USDA's lab-analyzed gold-standard data.
         kcal = by_num.get("208") or by_num.get("957") or by_num.get("958") or 0
-        if not kcal:
+        # Zero-kcal foods (salt!) are real: keep them when other nutrients exist,
+        # else "salt" can only ever match caloric salted foods like butter.
+        if not kcal and not any(by_num.get(n) for n in ("203", "204", "205", "307")):
             continue
         candidates.append({
             "name": str(food.get("description") or "").strip().title(),
@@ -247,7 +249,7 @@ def _parse_off_products(data: dict) -> list[dict]:
             return float(_n.get(key) or 0)
 
         kcal = _f("energy-kcal_100g")
-        if not kcal:
+        if not kcal and not any(_f(k) for k in ("proteins_100g", "fat_100g", "carbohydrates_100g", "sodium_100g")):
             continue
         name = str(product.get("product_name") or product.get("product_name_en") or "").strip()
         brand = str(product.get("brands") or "").split(",")[0].strip()
@@ -394,7 +396,7 @@ async def _lookup_candidates(
     candidates: list[dict] = []
     for src, results in (("usda", usda), ("off", off), ("nutritionix", [nx] if nx else [])):
         for rank, per100 in enumerate(results):
-            if per100 and per100.get("kcal"):
+            if per100:
                 candidates.append({**per100, "source": src, "rank": rank})
     return candidates, branded
 
