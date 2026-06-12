@@ -115,6 +115,14 @@
                     color="warning"
                     class="ml-1"
                   />
+                  <v-icon
+                    v-else-if="b.agreement === 'pinned'"
+                    :icon="mdiPin"
+                    size="12"
+                    color="primary"
+                    class="ml-1"
+                    title="Pinned match — set on this ingredient's food"
+                  />
                 </span>
                 <span
                   v-if="rowMatched(b, i) && !sameish(b.input, rowMatched(b, i)!)"
@@ -207,7 +215,7 @@
 </template>
 
 <script setup lang="ts">
-import { mdiAlert, mdiClose } from "@mdi/js";
+import { mdiAlert, mdiClose, mdiPin } from "@mdi/js";
 import type { Nutrition, Recipe } from "~/lib/api/types/recipe";
 import type { NoUndefinedField } from "~/lib/api/types/non-generated";
 import { useUserApi } from "~/composables/api";
@@ -333,9 +341,15 @@ async function runEstimate() {
   errorMessage.value = "";
   phase.value = "loading";
   try {
-    const strings = recipe.value.recipeIngredient.map(ingredientToParserString).filter(Boolean);
+    const sourceIngredients = recipe.value.recipeIngredient.filter(i => ingredientToParserString(i));
+    const strings = sourceIngredients.map(ingredientToParserString);
     const { data: parsed } = await api.recipes.parseIngredients("nlp", strings);
-    const ingredients = (parsed ?? []).map(p => p.ingredient);
+    // Carry each ingredient's food id through so pinned per-food data is used
+    // and fresh matches are cached back onto the food.
+    const ingredients = (parsed ?? []).map((p, i) => ({
+      ...p.ingredient,
+      food_id: sourceIngredients[i]?.food?.id || null,
+    }));
 
     const { data } = await api.recipes.estimateNutrition(ingredients, servings.value || 1);
     if (!data) {

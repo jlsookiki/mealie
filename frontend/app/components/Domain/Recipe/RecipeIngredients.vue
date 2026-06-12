@@ -37,6 +37,27 @@
               color="secondary"
               density="comfortable"
             />
+            <button
+              v-if="ingredient.food?.id"
+              type="button"
+              class="ingredient-thumb mr-3"
+              :title="`About ${ingredient.food?.name || 'this ingredient'}`"
+              @click.stop="openSheet(ingredient)"
+            >
+              <v-img
+                v-if="ingredientImage(ingredient)"
+                :src="ingredientImage(ingredient)!"
+                cover
+                width="34"
+                height="34"
+              />
+              <v-icon
+                v-else
+                :icon="mdiFoodApple"
+                size="17"
+                class="ingredient-thumb__placeholder"
+              />
+            </button>
           </template>
           <v-list-item-title>
             <RecipeIngredientListItem
@@ -47,11 +68,18 @@
         </v-list-item>
       </div>
     </div>
+    <IngredientSheet
+      v-model="sheetOpen"
+      :ingredient="sheetIngredient"
+      :scale="scale"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
+import { mdiFoodApple } from "@mdi/js";
 import RecipeIngredientListItem from "./RecipeIngredientListItem.vue";
+import IngredientSheet from "./IngredientSheet.vue";
 import { useIngredientTextParser } from "~/composables/recipes";
 import type { RecipeIngredient } from "~/lib/api/types/recipe";
 
@@ -97,10 +125,49 @@ function toggleChecked(index: number) {
   // direct array modifications are not propagated for some reason
   checked.value.splice(index, 1, !checked.value[index]);
 }
+
+// --- ingredient intelligence (fork) ---
+const sheetOpen = ref(false);
+const sheetIngredient = ref<RecipeIngredient | null>(null);
+
+function ingredientImage(ingredient: RecipeIngredient): string | null {
+  return (ingredient.food as { extras?: Record<string, string> } | undefined)?.extras?.image_url || null;
+}
+
+function openSheet(ingredient: RecipeIngredient) {
+  sheetIngredient.value = ingredient;
+  sheetOpen.value = true;
+}
 </script>
 
 <style>
 .dense-markdown p {
   margin: auto !important;
+}
+
+.ingredient-thumb {
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  overflow: hidden;
+  flex: 0 0 auto;
+  background: rgba(var(--v-theme-primary), 0.06);
+  border: 1px solid rgba(var(--v-border-color), 0.08);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition:
+    transform 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+.ingredient-thumb:hover {
+  transform: scale(1.06);
+  box-shadow: var(--ms-shadow-sm);
+}
+
+.ingredient-thumb__placeholder {
+  opacity: 0.35;
 }
 </style>

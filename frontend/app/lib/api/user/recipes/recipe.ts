@@ -260,7 +260,7 @@ export class RecipeAPI extends BaseCRUDAPI<CreateRecipe, Recipe, Recipe> {
         kcal: number | null;
         matched: string | null;
         sources: { source: "usda" | "off" | "nutritionix"; name: string | null; kcalPer100: number | null }[];
-        agreement: "single" | "agree" | "divergent" | "none" | null;
+        agreement: "single" | "agree" | "divergent" | "pinned" | "none" | null;
         alternatives: {
           source: "usda" | "off" | "nutritionix";
           name: string | null;

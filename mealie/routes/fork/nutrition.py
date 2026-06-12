@@ -26,6 +26,8 @@ from fastapi import APIRouter
 
 from mealie.routes._base import BaseUserController, controller
 
+from .food_store import read_food_nutrition, write_food_nutrition
+
 router = APIRouter(prefix="/fork")
 
 # ---------------------------------------------------------------------------
@@ -88,6 +90,7 @@ class IngredientIn(BaseModel):
     unit: dict[str, Any] | str | None = None
     food: dict[str, Any] | str | None = None
     note: str | None = None
+    food_id: str | None = None  # links to a Mealie food: enables pinned data + write-back
 
 
 class NutritionEstimateRequest(BaseModel):
@@ -268,6 +271,7 @@ def _parse_off_products(data: dict) -> list[dict]:
             # crowd-verification signals: scan count separates OFF's good data from junk
             "scans": float(product.get("unique_scans_n") or 0),
             "completeness": float(product.get("completeness") or 0),
+            "image": product.get("image_front_small_url") or product.get("image_front_url") or None,
         })
     return candidates
 
@@ -594,6 +598,37 @@ class ForkNutritionController(BaseUserController):
                 return
 
             grams = _to_grams(ing.quantity, unit_name, food_name or ing.note or "")
+
+            # Pinned food data short-circuits the live lookup entirely: the
+            # user confirmed this match once, so it's deterministic forever.
+            stored = None
+            if ing.food_id:
+                try:
+                    food_row = self.repos.ingredient_foods.get_one(ing.food_id)
+                    stored = read_food_nutrition(food_row) if food_row else None
+                except Exception:
+                    stored = None
+            if stored and stored["state"] == "user":
+                f = grams / 100.0
+                per100 = stored["per100"]
+                async with lock:
+                    for k in totals:
+                        totals[k] += per100.get(k, 0) * f
+                    breakdown.append(IngredientBreakdown(
+                        input=query,
+                        grams=int(round(grams)),
+                        source=stored["source"],
+                        kcal=int(round(per100.get("kcal", 0) * f)),
+                        matched=stored["name"],
+                        agreement="pinned",
+                        alternatives=[AlternativeOut(
+                            source=stored["source"], name=stored["name"],
+                            kcal=int(round(per100.get("kcal", 0) * f)),
+                            per100={k: float(per100.get(k, 0)) for k in totals},
+                        )],
+                    ))
+                return
+
             candidates, branded = await _lookup_candidates(client, query, api_key, nx_id, nx_key)
             primary, agreement, source_bests, ranked = _select_primary(candidates, branded, query)
 
@@ -643,6 +678,20 @@ class ForkNutritionController(BaseUserController):
                     agreement=agreement,
                     alternatives=alternatives,
                 ))
+                # Self-building food database: cache the auto-match on the food
+                # (never clobbers a user-pinned entry).
+                if ing.food_id:
+                    try:
+                        write_food_nutrition(
+                            self.repos, ing.food_id,
+                            per100={k: float(primary.get(k, 0)) for k in totals},
+                            source=primary["source"],
+                            name=primary.get("name"),
+                            state="auto",
+                            image_url=primary.get("image"),
+                        )
+                    except Exception:
+                        pass  # caching is best-effort; the estimate itself succeeded
 
         async with httpx.AsyncClient() as client:
             await asyncio.gather(*[process_ingredient(ing) for ing in body.ingredients])

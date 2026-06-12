@@ -136,6 +136,16 @@
 
       <div class="ingredient-row__actions d-flex align-center">
         <v-btn
+          v-if="model.food?.id"
+          icon
+          size="x-small"
+          variant="text"
+          :title="`Nutrition & image for ${model.food?.name}`"
+          @click="$emit('food-info')"
+        >
+          <v-icon :icon="mdiFoodApple" />
+        </v-btn>
+        <v-btn
           icon
           size="x-small"
           variant="text"
@@ -176,7 +186,7 @@
 </template>
 
 <script setup lang="ts">
-import { mdiDeleteOutline, mdiDotsVertical, mdiDragVertical } from "@mdi/js";
+import { mdiDeleteOutline, mdiDotsVertical, mdiDragVertical, mdiFoodApple } from "@mdi/js";
 import { useFoodStore, useFoodData, useUnitStore, useUnitData } from "~/composables/store";
 import { useSearch } from "~/composables/use-search";
 import type { RecipeIngredient } from "~/lib/api/types/recipe";
@@ -193,7 +203,7 @@ const props = defineProps({
   },
 });
 
-defineEmits(["delete", "insert-above", "insert-below", "note-enter"]);
+defineEmits(["delete", "insert-above", "insert-below", "note-enter", "food-info"]);
 
 const state = reactive({
   showTitle: false,

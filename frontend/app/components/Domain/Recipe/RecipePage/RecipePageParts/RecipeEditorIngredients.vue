@@ -45,6 +45,7 @@
           @insert-above="insertNewIngredient(index)"
           @insert-below="insertNewIngredient(index + 1)"
           @note-enter="onNoteEnter(index)"
+          @food-info="openFoodSheet(ingredient)"
         />
       </TransitionGroup>
     </VueDraggable>
@@ -118,6 +119,10 @@
         style="display: none"
         @bulk-data="addIngredient"
       />
+      <IngredientSheet
+        v-model="foodSheetOpen"
+        :ingredient="foodSheetIngredient"
+      />
     </div>
   </section>
 </template>
@@ -130,6 +135,7 @@ import type { NoUndefinedField } from "~/lib/api/types/non-generated";
 import type { Recipe, RecipeIngredient } from "~/lib/api/types/recipe";
 import RecipeEditorIngredientRow from "~/components/Domain/Recipe/RecipeEditorIngredientRow.vue";
 import RecipeDialogBulkAdd from "~/components/Domain/Recipe/RecipeDialogBulkAdd.vue";
+import IngredientSheet from "~/components/Domain/Recipe/IngredientSheet.vue";
 import { usePageState } from "~/composables/recipe-page/shared-state";
 import { uuid4 } from "~/composables/use-utils";
 
@@ -138,6 +144,14 @@ const ingredientsWithRecipe = new Map<string, boolean>();
 const i18n = useI18n();
 
 const drag = ref(false);
+
+// ingredient intelligence sheet (fork)
+const foodSheetOpen = ref(false);
+const foodSheetIngredient = ref<RecipeIngredient | null>(null);
+function openFoodSheet(ingredient: RecipeIngredient) {
+  foodSheetIngredient.value = ingredient;
+  foodSheetOpen.value = true;
+}
 const domBulkAddDialog = ref<InstanceType<typeof RecipeDialogBulkAdd> | null>(null);
 const { toggleIsParsing } = usePageState(recipe.value.slug);
 const reduceMotion = usePreferredReducedMotion();
