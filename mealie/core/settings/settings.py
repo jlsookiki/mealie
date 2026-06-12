@@ -426,6 +426,12 @@ class AppSettings(AppLoggingSettings):
     NUTRITIONIX_APP_KEY: str = ""
     """Nutritionix application key (x-app-key). Empty disables the Nutritionix source."""
 
+    GEMINI_API_KEY: str = ""
+    """Google Gemini API key for AI recipe-image generation. Empty disables the provider."""
+
+    POLLINATIONS_TOKEN: str = ""
+    """pollinations.ai token for AI recipe-image generation. Empty disables the provider."""
+
     # ===============================================
     # OpenAI Configuration
 

@@ -240,6 +240,13 @@ export class RecipeAPI extends BaseCRUDAPI<CreateRecipe, Recipe, Recipe> {
     return await this.requests.post<ParsedIngredient>(routes.recipesParseIngredient, { parser, ingredient });
   }
 
+  async generateImage(slug: string, style = "") {
+    return await this.requests.post<{ image: string; provider: string; prompt: string }>(
+      `${prefix}/fork/recipes/${slug}/generate-image`,
+      { style: style || null },
+    );
+  }
+
   async estimateNutrition(ingredients: ParsedIngredient["ingredient"][], servings: number) {
     return await this.requests.post<{
       nutrition: {

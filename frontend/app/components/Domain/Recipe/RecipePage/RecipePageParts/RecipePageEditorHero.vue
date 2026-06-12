@@ -171,20 +171,35 @@
             <div class="recipe-hero__empty-hint">
               Drag &amp; drop, click to upload, or paste a URL below
             </div>
-            <v-btn
-              size="small"
-              variant="tonal"
-              color="accent"
-              rounded="lg"
-              class="mt-3"
-              @click.stop="urlOpen = !urlOpen"
-            >
-              <v-icon
-                start
-                :icon="mdiLinkVariant"
-              />
-              From URL
-            </v-btn>
+            <div class="d-flex ga-2 mt-3">
+              <v-btn
+                size="small"
+                variant="tonal"
+                color="accent"
+                rounded="lg"
+                @click.stop="urlOpen = !urlOpen"
+              >
+                <v-icon
+                  start
+                  :icon="mdiLinkVariant"
+                />
+                From URL
+              </v-btn>
+              <v-btn
+                size="small"
+                variant="tonal"
+                color="primary"
+                rounded="lg"
+                :loading="generating"
+                @click.stop="generateImage"
+              >
+                <v-icon
+                  start
+                  :icon="mdiCreation"
+                />
+                Generate
+              </v-btn>
+            </div>
           </div>
         </template>
       </AppButtonUpload>
@@ -225,6 +240,7 @@
 import {
   mdiAlertCircle,
   mdiClose,
+  mdiCreation,
   mdiCropFree,
   mdiDelete,
   mdiImagePlus,
@@ -245,6 +261,7 @@ const { recipeImage } = useStaticRoutes();
 const { imageKey } = usePageState(recipe.value.slug);
 
 const uploading = ref(false);
+const generating = ref(false);
 const urlOpen = ref(false);
 const url = ref("");
 const cropDialog = ref(false);
@@ -321,6 +338,28 @@ function onDropFiles(files: File[]) {
   const image = files.find(f => f.type.startsWith("image/"));
   if (image) {
     uploadImage(image);
+  }
+}
+
+async function generateImage() {
+  if (!recipe.value.slug || generating.value) {
+    return;
+  }
+  generating.value = true;
+  try {
+    const { data, error } = await api.recipes.generateImage(recipe.value.slug);
+    if (error || !data) {
+      alert.error("Couldn't generate a photo — is an image provider configured?");
+      return;
+    }
+    recipe.value.image = data.image;
+    imageFailed.value = false;
+    imageKey.value++;
+    emit("image-updated");
+    alert.success("Cover photo generated");
+  }
+  finally {
+    generating.value = false;
   }
 }
 </script>
