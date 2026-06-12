@@ -27,7 +27,7 @@ from mealie.services.recipe.recipe_service import RecipeService
 router = UserAPIRouter(prefix="/fork/recipes")
 
 _GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image:generateContent"
-_POLLINATIONS_URL = "https://image.pollinations.ai/prompt/{prompt}"
+_POLLINATIONS_URL = "https://gen.pollinations.ai/image/{prompt}"
 
 
 class GenerateImageRequest(BaseModel):
@@ -80,7 +80,7 @@ async def _generate_gemini(prompt: str, api_key: str) -> tuple[bytes, str]:
 
 async def _generate_pollinations(prompt: str, token: str) -> tuple[bytes, str]:
     url = _POLLINATIONS_URL.format(prompt=quote(prompt))
-    params = {"width": 1024, "height": 768, "model": "flux", "nologo": "true"}
+    params = {"width": 1024, "height": 768}
     headers = {"Authorization": f"Bearer {token}"} if token else {}
     async with httpx.AsyncClient(timeout=120.0, follow_redirects=True) as client:
         resp = await client.get(url, params=params, headers=headers)
