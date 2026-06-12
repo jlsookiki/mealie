@@ -113,7 +113,7 @@ class ForkFoodDataController(BaseUserController):
             async with httpx.AsyncClient() as client:
                 image_url = await mealdb_image(client, self._get_food(food_id).name)
         ok = write_food_nutrition(
-            self.repos, food_id,
+            self.repos, food_id, group_id=self.group_id,
             per100=body.per100, source=body.source, name=body.matched_name,
             state="user", image_url=image_url,
         )
@@ -125,5 +125,5 @@ class ForkFoodDataController(BaseUserController):
     def clear_nutrition(self, food_id: str) -> dict:
         """Remove stored nutrition/image data from this food."""
         self._get_food(food_id)
-        clear_food_nutrition(self.repos, food_id)
+        clear_food_nutrition(self.repos, food_id, self.group_id)
         return {"cleared": True}

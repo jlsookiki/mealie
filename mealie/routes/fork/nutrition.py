@@ -683,7 +683,7 @@ class ForkNutritionController(BaseUserController):
                 if ing.food_id:
                     try:
                         write_food_nutrition(
-                            self.repos, ing.food_id,
+                            self.repos, ing.food_id, group_id=self.group_id,
                             per100={k: float(primary.get(k, 0)) for k in totals},
                             source=primary["source"],
                             name=primary.get("name"),

@@ -18,6 +18,8 @@ import re
 
 import httpx
 
+from mealie.schema.recipe.recipe_ingredient import SaveIngredientFood
+
 NUTRI_KEYS = ["kcal", "protein", "fat", "carb", "fiber", "sugar", "sodium_mg", "chol_mg", "sat_fat"]
 
 _MEALDB_IMG = "https://www.themealdb.com/images/ingredients/{}.png"
@@ -48,6 +50,7 @@ def write_food_nutrition(
     repos,
     food_id,
     *,
+    group_id,
     per100: dict,
     source: str,
     name: str | None,
@@ -69,11 +72,13 @@ def write_food_nutrition(
     if image_url:
         extras["image_url"] = image_url
     food.extras = extras
-    repos.ingredient_foods.update(food_id, food)
+    # The repo layer needs group_id in the payload (same cast the core foods
+    # PUT route does), or the DB model re-init blows up.
+    repos.ingredient_foods.update(food_id, food.cast(SaveIngredientFood, group_id=group_id))
     return True
 
 
-def clear_food_nutrition(repos, food_id) -> bool:
+def clear_food_nutrition(repos, food_id, group_id) -> bool:
     food = repos.ingredient_foods.get_one(food_id)
     if food is None:
         return False
@@ -81,7 +86,7 @@ def clear_food_nutrition(repos, food_id) -> bool:
     for key in ("nutri_per100", "nutri_source", "nutri_name", "nutri_state", "image_url"):
         extras.pop(key, None)
     food.extras = extras
-    repos.ingredient_foods.update(food_id, food)
+    repos.ingredient_foods.update(food_id, food.cast(SaveIngredientFood, group_id=group_id))
     return True
 
 
