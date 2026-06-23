@@ -22,9 +22,13 @@ export interface FoodNutritionPer100 {
   sat_fat: number;
 }
 
+export type FoodAuthority = "official" | "manual" | "estimate";
+
 export interface FoodNutritionStored {
   per100: FoodNutritionPer100;
-  source: "usda" | "off" | "manual";
+  source: "usda" | "off" | "nutritionix" | "manual" | "claude";
+  sourceDetail: string | null;
+  authority: FoodAuthority;
   name: string | null;
   state: "user" | "auto";
   image_url: string | null;
@@ -61,7 +65,10 @@ export class FoodAPI extends BaseCRUDAPI<CreateIngredientFood, IngredientFood> {
     per100: FoodNutritionPer100;
     source: string;
     matched_name?: string | null;
+    source_detail?: string | null;
+    authority?: FoodAuthority;
     image_url?: string | null;
+    force?: boolean;
   }) {
     return this.requests.put<FoodNutritionStored>(`${prefix}/fork/foods/${foodId}/nutrition`, payload);
   }

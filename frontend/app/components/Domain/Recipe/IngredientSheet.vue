@@ -42,10 +42,24 @@
               />
               {{ stored.state === "user" ? "Pinned" : "Auto-matched" }}
             </v-chip>
-            <span
-              v-if="stored?.name"
-              class="ingredient-sheet__matched"
-            >{{ stored.name }}</span>
+            <v-chip
+              v-if="authorityMeta"
+              size="x-small"
+              variant="tonal"
+              :color="authorityMeta.color"
+            >
+              {{ authorityMeta.label }}
+            </v-chip>
+          </div>
+          <div
+            v-if="stored?.sourceDetail"
+            class="ingredient-sheet__matched mt-1"
+          >
+            <v-icon
+              size="12"
+              :icon="mdiBookOpenVariant"
+            />
+            {{ stored.sourceDetail }}
           </div>
         </div>
         <v-btn
@@ -229,8 +243,18 @@
         <v-expand-transition>
           <div v-if="editOpen">
             <p class="ingredient-sheet__empty mt-1 mb-2">
-              Values per 100g.
+              Values per 100g. Saved as a trusted manual entry.
             </p>
+            <v-text-field
+              v-model="manualSource"
+              label="Source (optional)"
+              placeholder="e.g. package label, USDA, cookbook…"
+              density="compact"
+              variant="outlined"
+              rounded="lg"
+              hide-details
+              class="mb-2"
+            />
             <div class="ingredient-sheet__edit-grid">
               <v-text-field
                 v-for="f in EDIT_FIELDS"
@@ -276,7 +300,7 @@
 </template>
 
 <script setup lang="ts">
-import { mdiAutoFix, mdiChevronUp, mdiClose, mdiFoodApple, mdiPencil, mdiPin } from "@mdi/js";
+import { mdiAutoFix, mdiBookOpenVariant, mdiChevronUp, mdiClose, mdiFoodApple, mdiPencil, mdiPin } from "@mdi/js";
 import type { RecipeIngredient } from "~/lib/api/types/recipe";
 import type { FoodCandidate, FoodNutritionPer100, FoodNutritionStored } from "~/lib/api/user/recipe-foods";
 import { useUserApi } from "~/composables/api";
@@ -302,6 +326,7 @@ const editOpen = ref(false);
 const errorMessage = ref("");
 const factsMode = ref<"per100" | "recipe">("per100");
 const editValues = ref<Record<string, string>>({});
+const manualSource = ref("");
 
 const MACROS = [
   { key: "protein", label: "Protein" },
@@ -341,10 +366,14 @@ function readStoredFromExtras(): FoodNutritionStored | null {
   if (!extras?.nutri_per100) {
     return null;
   }
+  const source = (extras.nutri_source as FoodNutritionStored["source"]) || "manual";
   try {
     return {
       per100: JSON.parse(extras.nutri_per100),
-      source: (extras.nutri_source as FoodNutritionStored["source"]) || "manual",
+      source,
+      sourceDetail: extras.nutri_source_detail || null,
+      authority: (extras.nutri_authority as FoodNutritionStored["authority"])
+        || (["usda", "off", "nutritionix"].includes(source) ? "official" : "manual"),
       name: extras.nutri_name || null,
       state: (extras.nutri_state as FoodNutritionStored["state"]) || "auto",
       image_url: extras.image_url || null,
@@ -367,6 +396,7 @@ watch(open, (v) => {
     factsMode.value = grams.value ? "recipe" : "per100";
     const p = stored.value?.per100 ?? ({} as Partial<FoodNutritionPer100>);
     editValues.value = Object.fromEntries(EDIT_FIELDS.map(f => [f.key, String(p[f.key as keyof FoodNutritionPer100] ?? 0)]));
+    manualSource.value = stored.value?.source === "manual" ? (stored.value.sourceDetail ?? "") : "";
   }
 });
 
@@ -380,10 +410,17 @@ function factsValue(key: string): string {
   return String(Math.round(value * 10) / 10);
 }
 
-const SOURCE_LABELS: Record<string, string> = { usda: "USDA", off: "Open Food Facts", nutritionix: "Nutritionix", manual: "Manual" };
+const SOURCE_LABELS: Record<string, string> = { usda: "USDA", off: "Open Food Facts", nutritionix: "Nutritionix", manual: "Manual", claude: "Claude" };
 function sourceLabel(s: string): string {
   return SOURCE_LABELS[s] ?? s;
 }
+
+const AUTHORITY_META: Record<string, { label: string; color: string }> = {
+  official: { label: "Official", color: "success" },
+  manual: { label: "Manual", color: "primary" },
+  estimate: { label: "Estimate", color: "warning" },
+};
+const authorityMeta = computed(() => stored.value ? AUTHORITY_META[stored.value.authority] ?? null : null);
 
 async function runSearch() {
   if (!foodId.value) {
@@ -423,6 +460,8 @@ async function pinCandidate(c: FoodCandidate) {
       per100: c.per100,
       source: c.source,
       matched_name: c.name,
+      authority: "official",
+      source_detail: `${sourceLabel(c.source)}${c.dataType ? ` · ${c.dataType}` : ""}: ${c.name ?? ""}`.trim(),
       image_url: c.image || genericImage.value,
     });
     if (data) {
@@ -447,7 +486,14 @@ async function saveManual() {
     const per100 = Object.fromEntries(
       EDIT_FIELDS.map(f => [f.key, Number(editValues.value[f.key]) || 0]),
     ) as unknown as FoodNutritionPer100;
-    const { data } = await api.foods.pinNutrition(foodId.value, { per100, source: "manual", matched_name: "Manual entry" });
+    const { data } = await api.foods.pinNutrition(foodId.value, {
+      per100,
+      source: "manual",
+      matched_name: manualSource.value.trim() || "Manual entry",
+      source_detail: manualSource.value.trim() || "Entered manually",
+      authority: "manual",
+      force: true,
+    });
     if (data) {
       applyStored(data);
       editOpen.value = false;
@@ -492,6 +538,8 @@ function syncExtras(data: FoodNutritionStored | null) {
   if (data) {
     extras.nutri_per100 = JSON.stringify(data.per100);
     extras.nutri_source = data.source;
+    extras.nutri_source_detail = data.sourceDetail || "";
+    extras.nutri_authority = data.authority;
     extras.nutri_name = data.name || "";
     extras.nutri_state = data.state;
     if (data.image_url) {
@@ -501,6 +549,8 @@ function syncExtras(data: FoodNutritionStored | null) {
   else {
     delete extras.nutri_per100;
     delete extras.nutri_source;
+    delete extras.nutri_source_detail;
+    delete extras.nutri_authority;
     delete extras.nutri_name;
     delete extras.nutri_state;
     delete extras.image_url;

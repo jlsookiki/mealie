@@ -688,6 +688,8 @@ class ForkNutritionController(BaseUserController):
                             source=primary["source"],
                             name=primary.get("name"),
                             state="auto",
+                            authority="official",
+                            source_detail=f"Auto-matched: {primary.get('name') or primary['source']}",
                             image_url=primary.get("image"),
                         )
                     except Exception:

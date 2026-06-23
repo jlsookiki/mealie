@@ -19,7 +19,14 @@ from pydantic import BaseModel
 from mealie.routes._base import BaseUserController, controller
 from mealie.routes._base.routers import UserAPIRouter
 
-from .food_store import NUTRI_KEYS, clear_food_nutrition, mealdb_image, read_food_nutrition, write_food_nutrition
+from .food_store import (
+    AUTHORITY_RANK,
+    NUTRI_KEYS,
+    clear_food_nutrition,
+    mealdb_image,
+    read_food_nutrition,
+    write_food_nutrition,
+)
 from .nutrition import _looks_branded, _lookup_candidates, _select_primary
 
 router = UserAPIRouter(prefix="/fork/foods")
@@ -48,9 +55,12 @@ class FoodSearchResponse(BaseModel):
 
 class FoodNutritionIn(BaseModel):
     per100: dict[str, float]
-    source: str = "manual"  # "usda" | "off" | "manual"
+    source: str = "manual"  # "usda" | "off" | "nutritionix" | "manual"
     matched_name: str | None = None
+    source_detail: str | None = None  # citation, e.g. "USDA FDC #11215" / "Claude estimate"
+    authority: str = "manual"  # "official" | "manual" | "estimate"
     image_url: str | None = None
+    force: bool = False  # override the estimate-cannot-replace-trusted-data guard
 
 
 @controller(router)
@@ -106,16 +116,36 @@ class ForkFoodDataController(BaseUserController):
     async def pin_nutrition(self, food_id: str, body: FoodNutritionIn) -> dict:
         """Pin nutrition data (and optionally an image) to this food. Pinned
         data is used by every future estimate involving the food and is never
-        overwritten by automatic matching."""
-        self._get_food(food_id)
+        overwritten by automatic matching.
+
+        Guard ("prefer an official one"): a low-confidence `estimate` cannot
+        replace an existing trusted (official/manual) pin unless `force=true`."""
+        food = self._get_food(food_id)
+        authority = body.authority if body.authority in AUTHORITY_RANK else "manual"
+
+        existing = read_food_nutrition(food)
+        if (
+            existing
+            and existing["state"] == "user"
+            and not body.force
+            and AUTHORITY_RANK[authority] < AUTHORITY_RANK.get(existing["authority"], 2)
+        ):
+            raise HTTPException(
+                409,
+                f"Refusing to replace a '{existing['authority']}' value "
+                f"({existing.get('name') or 'existing'}) with a lower-trust '{authority}' one. "
+                "Pass force=true to override.",
+            )
+
         image_url = body.image_url
         if not image_url:
             async with httpx.AsyncClient() as client:
-                image_url = await mealdb_image(client, self._get_food(food_id).name)
+                image_url = await mealdb_image(client, food.name)
         ok = write_food_nutrition(
             self.repos, food_id, group_id=self.group_id,
             per100=body.per100, source=body.source, name=body.matched_name,
-            state="user", image_url=image_url,
+            state="user", authority=authority, source_detail=body.source_detail,
+            image_url=image_url,
         )
         if not ok:
             raise HTTPException(500, "Could not save nutrition data")
